@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { getGeminiResponse } from "./services/geminiService";
+import { auth, signInWithGoogle, logout, onAuthStateChanged, db, User } from "./firebase";
+import { doc, onSnapshot, collection, query, where, getDocs, setDoc, addDoc, deleteDoc, updateDoc, limit, orderBy, Timestamp, getDocFromServer } from "firebase/firestore";
+import { LogOut, User as UserIcon, Shield, CreditCard, TrendingUp, BookOpen, Zap, CheckCircle2, ArrowRight, Layout, Globe, Cpu, DollarSign, Bell, BarChart3, Download, Plus, Trash2, Save, Edit3, X, Search, Filter, Lock } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 
 /* ─── TOKENS ─────────────────────────────────────────────────────────────── */
 const C = {
@@ -13,6 +17,99 @@ const C = {
   text: "#e2e8f0", muted: "#64748b", dim: "#1e2535",
 };
 
+/* ─── ERROR HANDLING ─────────────────────────────────────────────────────── */
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+  constructor(props: any) {
+    super(props);
+    (this as any).state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    const { hasError, error } = (this as any).state;
+    if (hasError) {
+      let displayMessage = "Something went wrong. Please try again later.";
+      try {
+        const parsed = JSON.parse(error.message);
+        if (parsed.error?.includes("permission-denied")) {
+          displayMessage = "You don't have permission to access this data. Please make sure you are logged in with the correct account.";
+        }
+      } catch (e) {}
+
+      return (
+        <div style={{ height: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.red}`, borderRadius: 16, padding: 32, maxWidth: 400, textAlign: "center" }}>
+            <div style={{ color: C.red, fontSize: 48, marginBottom: 16 }}>⚠️</div>
+            <h2 style={{ color: C.text, fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Application Error</h2>
+            <p style={{ color: C.muted, fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>{displayMessage}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              style={{ padding: "12px 24px", borderRadius: 10, border: "none", background: C.gemini, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
+
 /* ─── MODEL CONFIG ───────────────────────────────────────────────────────── */
 const MODELS = {
   gemini: {
@@ -24,9 +121,6 @@ const MODELS = {
     glow: C.geminiGlow,
     icon: "✦",
     strengths: ["Scanned PDF OCR", "1M token context", "Free tier available"],
-    keyPlaceholder: "AIza... (Google AI Studio key)",
-    keyLink: "https://aistudio.google.com/app/apikey",
-    keyLinkLabel: "Get free Gemini key →",
   },
   claude: {
     id: "claude",
@@ -37,8 +131,6 @@ const MODELS = {
     glow: C.claudeGlow,
     icon: "◆",
     strengths: ["Structured JSON output", "Complex reasoning", "Works instantly here"],
-    keyPlaceholder: "Auto-handled in claude.ai",
-    keyLink: null,
   },
 };
 
@@ -150,8 +242,8 @@ async function callClaude(fileData: any, promptText: string) {
 }
 
 /* ─── UNIFIED CALL ───────────────────────────────────────────────────────── */
-async function callAI(model: string, geminiKey: string, fileData: any, promptText: string) {
-  if (model === "gemini") return getGeminiResponse(geminiKey, fileData, promptText);
+async function callAI(model: string, fileData: any, promptText: string) {
+  if (model === "gemini") return getGeminiResponse(fileData, promptText);
   return callClaude(fileData, promptText);
 }
 
@@ -300,99 +392,76 @@ function DropZone({ label, sublabel, onFile, accent }: { label: string, sublabel
 }
 
 /* ─── MODEL SELECTOR ─────────────────────────────────────────────────────── */
-function ModelSelector({ selected, onSelect, geminiKey, onGeminiKey }: any) {
+function ModelSelector({ selected, onSelect, configs, isPremium }: any) {
+  // Merge static MODELS with dynamic configs
+  const mergedModels = Object.values(MODELS).map(m => {
+    const config = configs.find((c: any) => c.id === m.id);
+    return {
+      ...m,
+      ...config, // Overwrite with dynamic config (label, description, isEnabled, isPremiumOnly)
+    };
+  }).filter(m => m.isEnabled !== false); // Default to enabled if no config
+
   return (
     <div style={{ marginBottom: 24 }}>
       <p style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.08em", marginBottom: 12 }}>
         SELECT AI MODEL
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {Object.values(MODELS).map(m => (
-          <div
-            key={m.id}
-            onClick={() => onSelect(m.id)}
-            style={{
-              background: selected === m.id ? `${m.accent}12` : C.surface,
-              border: `1.5px solid ${selected === m.id ? m.accent : C.border}`,
-              borderRadius: 12, padding: "14px 14px", cursor: "pointer",
-              transition: "all 0.2s",
-              boxShadow: selected === m.id ? `0 0 20px ${m.glow}` : "none",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ color: m.accent, fontSize: 16 }}>{m.icon}</span>
-                <span style={{ color: C.text, fontWeight: 700, fontSize: 13 }}>{m.label}</span>
+        {mergedModels.map(m => {
+          const locked = m.isPremiumOnly && !isPremium;
+          return (
+            <div
+              key={m.id}
+              onClick={() => {
+                if (locked) {
+                  alert("This model is exclusive to Premium members.");
+                  return;
+                }
+                onSelect(m.id);
+              }}
+              style={{
+                background: selected === m.id ? `${m.accent}12` : C.surface,
+                border: `1.5px solid ${selected === m.id ? m.accent : C.border}`,
+                borderRadius: 12, padding: "14px 14px", cursor: locked ? "not-allowed" : "pointer",
+                transition: "all 0.2s",
+                boxShadow: selected === m.id ? `0 0 20px ${m.glow}` : "none",
+                opacity: locked ? 0.6 : 1,
+                position: "relative",
+              }}
+            >
+              {locked && (
+                <div style={{ position: "absolute", top: 10, right: 10, color: C.amber }}>
+                  <Lock size={14} />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: m.accent, fontSize: 16 }}>{m.icon}</span>
+                  <span style={{ color: C.text, fontWeight: 700, fontSize: 13 }}>{m.label}</span>
+                </div>
+                {m.isPremiumOnly && <Chip color={C.amber}>PREMIUM</Chip>}
               </div>
-              <Chip color={m.badgeColor}>{m.badge}</Chip>
+              <p style={{ color: C.muted, fontSize: 11, margin: 0, lineHeight: 1.4 }}>
+                {m.description || m.strengths?.join(", ")}
+              </p>
+              {selected === m.id && (
+                <div style={{
+                  marginTop: 10, width: 20, height: 20, borderRadius: "50%",
+                  background: m.accent, display: "flex", alignItems: "center",
+                  justifyContent: "center", color: "#000", fontSize: 11, fontWeight: 800,
+                }}>✓</div>
+              )}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {m.strengths.map((s, i) => (
-                <p key={i} style={{ color: C.muted, fontSize: 11, margin: 0 }}>
-                  <span style={{ color: m.accent }}>✓</span> {s}
-                </p>
-              ))}
-            </div>
-            {selected === m.id && (
-              <div style={{
-                marginTop: 10, width: 20, height: 20, borderRadius: "50%",
-                background: m.accent, display: "flex", alignItems: "center",
-                justifyContent: "center", color: "#000", fontSize: 11, fontWeight: 800,
-              }}>✓</div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
-
-      {/* Gemini key input */}
-      {selected === "gemini" && (
-        <div style={{ marginTop: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <label style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-              GOOGLE GEMINI API KEY
-            </label>
-            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer"
-              style={{ color: C.gemini, fontSize: 11, textDecoration: "none" }}>
-              Get free key →
-            </a>
-          </div>
-          <input
-            type="password"
-            value={geminiKey}
-            onChange={e => onGeminiKey(e.target.value)}
-            placeholder="AIza..."
-            style={{
-              width: "100%", padding: "10px 14px", borderRadius: 10,
-              background: C.card, border: `1px solid ${geminiKey ? C.gemini : C.border}`,
-              color: C.text, fontSize: 13, outline: "none",
-              fontFamily: "'JetBrains Mono', monospace",
-              transition: "border 0.2s",
-            }}
-          />
-          {geminiKey && (
-            <p style={{ color: C.green, fontSize: 11, marginTop: 6, fontFamily: "'JetBrains Mono', monospace" }}>
-              ✓ Key entered
-            </p>
-          )}
-        </div>
-      )}
-      {selected === "claude" && (
-        <div style={{
-          marginTop: 12, background: `${C.claude}08`, border: `1px solid ${C.claude}25`,
-          borderRadius: 10, padding: "10px 14px", display: "flex", gap: 8, alignItems: "center",
-        }}>
-          <span style={{ color: C.claude }}>◆</span>
-          <p style={{ color: C.text, fontSize: 12, margin: 0 }}>
-            Claude integration requires a server-side proxy.
-          </p>
-        </div>
-      )}
     </div>
   );
 }
 
 /* ─── CURRENT AFFAIRS ENGINE ──────────────────────────────────────────────── */
-function CurrentAffairsEngine({ apiKey, accent }: { apiKey: string, accent: string }) {
+function CurrentAffairsEngine({ accent }: { accent: string }) {
   const [mode, setMode] = useState<CAMode>("daily");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<{ insight: string, questions: CAQuestion[] } | null>(null);
@@ -400,21 +469,17 @@ function CurrentAffairsEngine({ apiKey, accent }: { apiKey: string, accent: stri
   const [showExplanations, setShowExplanations] = useState<Record<string, boolean>>({});
 
   const generateCA = async (m: CAMode) => {
-    if (!apiKey) {
-      alert("Please enter your Gemini API key first.");
-      return;
-    }
     setLoading(true);
     setMode(m);
     try {
       const prompt = currentAffairsPrompt(m);
-      const res = await getGeminiResponse(apiKey, null, prompt);
+      const res = await getGeminiResponse(null, prompt);
       setData(res);
       setSelectedAnswers({});
       setShowExplanations({});
     } catch (error) {
       console.error(error);
-      alert("Failed to generate current affairs. Check your API key and connection.");
+      alert("Failed to generate current affairs. Please try again later.");
     } finally {
       setLoading(false);
     }
@@ -759,14 +824,16 @@ function RoundCard({ round, index, active, onClick }: any) {
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /* ─── MAIN APP ───────────────────────────────────────────────────────────── */
 /* ═══════════════════════════════════════════════════════════════════════════ */
-export default function BPSCPredictor() {
-  const [mainView, setMainView] = useState<"predictor" | "ca">("predictor");
+function BPSCPredictor() {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription">("predictor");
   const [rounds, setRounds] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [phase, setPhase] = useState("START");
   // model state
   const [model, setModel] = useState("gemini");
-  const [geminiKey, setGeminiKey] = useState("");
   // files & year
   const [sourceYear, setSourceYear] = useState(2022);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -775,18 +842,76 @@ export default function BPSCPredictor() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [homepageConfig, setHomepageConfig] = useState<any>(null);
+  const [seoConfig, setSeoConfig] = useState<any>(null);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [llmConfigs, setLlmConfigs] = useState<any[]>([]);
 
-  const accent = (MODELS as any)[model].accent;
+  const activeLlm = llmConfigs.find(l => l.id === model) || (MODELS as any)[model];
+  const accent = activeLlm?.accent || C.gemini;
+
+  const isUserAdmin = user?.email === "ankitrgpv@gmail.com" || profile?.role === "admin";
+
+  /* Auth */
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthLoading(false);
+      if (u) {
+        const profileUnsub = onSnapshot(doc(db, "users", u.uid), (snap) => {
+          if (snap.exists()) setProfile(snap.data());
+        }, (err) => handleFirestoreError(err, OperationType.GET, `users/${u.uid}`));
+        return () => profileUnsub();
+      } else {
+        setProfile(null);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  /* Notifications Listener (Auth Required) */
+  useEffect(() => {
+    if (!user) {
+      setNotifications([]);
+      return;
+    }
+    const notifQuery = query(collection(db, "notifications"), orderBy("createdAt", "desc"), limit(5));
+    const notifUnsub = onSnapshot(notifQuery, (snap) => {
+      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "notifications"));
+    return () => notifUnsub();
+  }, [user]);
 
   /* Load */
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("payment") === "success") {
+      alert("Payment successful! Your account is being upgraded.");
+      window.history.replaceState({}, document.title, "/");
+    } else if (params.get("payment") === "cancel") {
+      alert("Payment cancelled.");
+      window.history.replaceState({}, document.title, "/");
+    }
+
+    // Connection Test
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'config', 'homepage'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+          setError("Firebase configuration error: Client is offline.");
+        }
+      }
+    };
+    testConnection();
+
     (async () => {
       try {
         const saved = await storage.get("bpsc-v2-rounds");
         if (saved?.value) {
           const d = JSON.parse(saved.value);
           setRounds(d.rounds || []);
-          if (d.geminiKey) setGeminiKey(d.geminiKey);
           if (d.rounds?.length > 0) {
             setActiveIdx(d.rounds.length - 1);
             const last = d.rounds[d.rounds.length - 1];
@@ -797,13 +922,41 @@ export default function BPSCPredictor() {
       } catch (e) {}
       setReady(true);
     })();
+
+    // Dynamic Config Fetching (Public)
+    const hpUnsub = onSnapshot(doc(db, "config", "homepage"), (snap) => {
+      if (snap.exists()) setHomepageConfig(snap.data());
+    }, (err) => handleFirestoreError(err, OperationType.GET, "config/homepage"));
+    
+    const seoUnsub = onSnapshot(doc(db, "config", "seo"), (snap) => {
+      if (snap.exists()) setSeoConfig(snap.data());
+    }, (err) => handleFirestoreError(err, OperationType.GET, "config/seo"));
+    
+    const llmsUnsub = onSnapshot(collection(db, "llms"), (snap) => {
+      const configs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setLlmConfigs(configs);
+      // Automatically select default model
+      const def = configs.find((c: any) => c.isDefault && c.isEnabled);
+      if (def) {
+        setModel(def.id);
+      } else {
+        const firstEnabled = configs.find((c: any) => c.isEnabled);
+        if (firstEnabled) setModel(firstEnabled.id);
+      }
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "llms"));
+
+    return () => {
+      hpUnsub();
+      seoUnsub();
+      llmsUnsub();
+    };
   }, []);
 
   /* Save */
   useEffect(() => {
     if (!ready || rounds.length === 0) return;
-    storage.set("bpsc-v2-rounds", JSON.stringify({ rounds, geminiKey })).catch(() => {});
-  }, [rounds, ready, geminiKey]);
+    storage.set("bpsc-v2-rounds", JSON.stringify({ rounds })).catch(() => {});
+  }, [rounds, ready]);
 
   const learningCtx = rounds.filter(r => r.validation?.refinedLearnings)
     .map((r, i) => `[Round ${i + 1} | ${r.sourceYear}→${r.sourceYear + 1} | ${(MODELS as any)[r.model]?.label || r.model}]: ${r.validation.refinedLearnings}`)
@@ -812,11 +965,10 @@ export default function BPSCPredictor() {
   /* ── PREDICT ── */
   const runPredict = useCallback(async () => {
     if (!sourceFile) return;
-    if (model === "gemini" && !geminiKey.trim()) { setError("Please enter your Gemini API key."); return; }
     setLoading(true); setError(null);
     try {
       const fd = await readFile(sourceFile);
-      const result = await callAI(model, geminiKey, fd, predictPrompt(sourceYear, learningCtx));
+      const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx));
       const newRound = { sourceYear, predictions: result, validation: null, model, createdAt: Date.now() };
       const updated = [...rounds, newRound];
       setRounds(updated);
@@ -825,24 +977,23 @@ export default function BPSCPredictor() {
     } catch (e: any) {
       setError(`Analysis failed: ${e.message}. Try a .txt copy of the paper for better results.`);
     } finally { setLoading(false); }
-  }, [sourceFile, sourceYear, model, geminiKey, rounds, learningCtx]);
+  }, [sourceFile, sourceYear, model, rounds, learningCtx]);
 
   /* ── VALIDATE ── */
   const runValidate = useCallback(async () => {
     if (!validateFile || activeIdx === null) return;
     const round = rounds[activeIdx];
-    if (round.model === "gemini" && !geminiKey.trim()) { setError("Please enter your Gemini API key."); return; }
     setLoading(true); setError(null);
     try {
       const fd = await readFile(validateFile);
-      const result = await callAI(round.model, geminiKey, fd, validatePrompt(round.predictions, round.sourceYear + 1));
+      const result = await callAI(round.model, fd, validatePrompt(round.predictions, round.sourceYear + 1));
       const updated = rounds.map((r, i) => i === activeIdx ? { ...r, validation: result } : r);
       setRounds(updated);
       setPhase("DONE");
     } catch (e: any) {
       setError(`Validation failed: ${e.message}`);
     } finally { setLoading(false); }
-  }, [validateFile, activeIdx, rounds, geminiKey]);
+  }, [validateFile, activeIdx, rounds]);
 
   const startNewRound = () => {
     const last = rounds[rounds.length - 1];
@@ -862,12 +1013,53 @@ export default function BPSCPredictor() {
     ? Math.round(rounds.filter(r => r.validation).reduce((a, r) => a + r.validation.overallAccuracy, 0) / rounds.filter(r => r.validation).length)
     : null;
 
+  if (authLoading) {
+    return (
+      <div style={{ height: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+          style={{ width: 40, height: 40, border: `3px solid ${C.border}`, borderTopColor: C.gemini, borderRadius: "50%" }}
+        />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LandingView onLogin={signInWithGoogle} config={homepageConfig} />;
+  }
+
   if (!ready) return <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}><Loader label="Loading" accent={C.gemini} /></div>;
 
   const activeAccent = activeRound ? (MODELS as any)[activeRound.model]?.accent || accent : accent;
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Mulish', sans-serif", color: C.text, maxWidth: 900, margin: "0 auto", padding: "0 16px 80px" }}>
+
+      {/* NOTIFICATIONS */}
+      {notifications.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          {notifications.map(n => (
+            <motion.div
+              key={n.id}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              style={{
+                background: n.type === "warning" ? `${C.amber}15` : `${C.gemini}15`,
+                border: `1px solid ${n.type === "warning" ? C.amber : C.gemini}30`,
+                borderRadius: 12, padding: "12px 16px", marginBottom: 8,
+                display: "flex", alignItems: "center", gap: 12,
+              }}
+            >
+              <Bell size={16} style={{ color: n.type === "warning" ? C.amber : C.gemini }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{n.title}</div>
+                <div style={{ fontSize: 11, color: C.muted }}>{n.message}</div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
 
       {/* HEADER */}
       <div style={{ padding: "26px 0 18px", borderBottom: `1px solid ${C.border}`, marginBottom: 22 }}>
@@ -926,7 +1118,7 @@ export default function BPSCPredictor() {
 
       {mainView === "ca" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
-          <CurrentAffairsEngine apiKey={geminiKey} accent={accent} />
+          <CurrentAffairsEngine accent={accent} />
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: rounds.length > 0 ? "190px 1fr" : "1fr", gap: 20 }}>
@@ -980,8 +1172,6 @@ export default function BPSCPredictor() {
                   ))}
                 </div>
 
-                <ModelSelector selected={model} onSelect={setModel} geminiKey={geminiKey} onGeminiKey={setGeminiKey} />
-
                 <button onClick={() => setPhase("PREDICT_SETUP")} style={{
                   width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
                   background: `linear-gradient(135deg, ${accent}, ${accent}99)`,
@@ -1004,9 +1194,6 @@ export default function BPSCPredictor() {
                     ? `${rounds.filter(r => r.validation).length} round(s) of learnings will be applied automatically.`
                     : "Upload the paper you want to analyze. AI will predict patterns for the next year."}
                 </p>
-
-                {/* Model switch */}
-                <ModelSelector selected={model} onSelect={setModel} geminiKey={geminiKey} onGeminiKey={setGeminiKey} />
 
                 {/* Year picker */}
                 <div style={{ marginBottom: 16 }}>
@@ -1067,7 +1254,6 @@ export default function BPSCPredictor() {
                       <Chip color={activeRound.validation ? C.green : activeAccent}>
                         {activeRound.validation ? "Validated" : "Awaiting Validation"}
                       </Chip>
-                      <Chip color={activeAccent}>{(MODELS as any)[activeRound.model]?.icon} {(MODELS as any)[activeRound.model]?.label}</Chip>
                     </div>
                     <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 18 }}>
                       Predictions for {activeRound.sourceYear + 1}
@@ -1121,15 +1307,6 @@ export default function BPSCPredictor() {
                   </div>
                 </div>
 
-                {/* Show key input if gemini was used for this round */}
-                {activeRound.model === "gemini" && !geminiKey && (
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", display: "block", marginBottom: 6 }}>GEMINI API KEY</label>
-                    <input type="password" value={geminiKey} onChange={e => setGeminiKey(e.target.value)} placeholder="AIza..."
-                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 13, outline: "none", fontFamily: "'JetBrains Mono', monospace" }} />
-                  </div>
-                )}
-
                 <DropZone label={`BPSC PT ${activeRound.sourceYear + 1} Paper`} sublabel="Actual exam paper to compare predictions against" onFile={setValidateFile} accent={C.green} />
 
                 {error && <p style={{ color: C.red, fontSize: 12, marginTop: 12 }}>⚠ {error}</p>}
@@ -1152,6 +1329,723 @@ export default function BPSCPredictor() {
         </div>
       </div>
       )}
+
+      {/* FOOTER / USER MENU */}
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0,
+        background: C.surface, borderTop: `1px solid ${C.border}`,
+        padding: "10px 20px", display: "flex", justifyContent: "space-between",
+        alignItems: "center", zIndex: 100,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <img src={user.photoURL || ""} alt="" style={{ width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderBright}` }} referrerPolicy="no-referrer" />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>{user.displayName}</div>
+            <div style={{ fontSize: 10, color: profile?.isPremium ? C.amber : C.muted, display: "flex", alignItems: "center", gap: 4 }}>
+              {profile?.isPremium ? <Zap size={10} /> : null}
+              {profile?.isPremium ? "PREMIUM" : "FREE PLAN"}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 16 }}>
+          {!profile?.isPremium && (
+            <button onClick={() => setMainView("subscription")} style={{ background: "transparent", border: "none", color: C.amber, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              <Zap size={14} /> UPGRADE
+            </button>
+          )}
+          {isUserAdmin && (
+            <button onClick={() => setMainView("admin")} style={{ background: "transparent", border: "none", color: C.gemini, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              <Shield size={14} /> ADMIN
+            </button>
+          )}
+          <button onClick={logout} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            <LogOut size={14} /> LOGOUT
+          </button>
+        </div>
+      </div>
+
+      {/* MODALS / OVERLAYS */}
+      <AnimatePresence>
+        {mainView === "subscription" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{ position: "fixed", inset: 0, background: `${C.bg}ee`, zIndex: 200, overflowY: "auto" }}
+          >
+            <SubscriptionView profile={profile} onBack={() => setMainView("predictor")} />
+          </motion.div>
+        )}
+        {mainView === "admin" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{ position: "fixed", inset: 0, background: `${C.bg}ee`, zIndex: 200, overflowY: "auto" }}
+          >
+            <AdminDashboard onBack={() => setMainView("predictor")} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
+}
+
+/* ─── LANDING VIEW ───────────────────────────────────────────────────────── */
+function LandingView({ onLogin, config }: { onLogin: () => void, config: any }) {
+  const heroTitle = config?.heroTitle || "BPSC PT Predictor";
+  const heroSubtitle = config?.heroSubtitle || "The ultimate EdTech platform for BPSC aspirants. Predict trends, generate current affairs, and master your preparation with AI.";
+  const features = config?.features || [
+    { title: "Trend Analysis", desc: "Historical BPSC pattern matching", icon: "TrendingUp" },
+    { title: "AI Predictions", desc: "AI-powered topic forecasting", icon: "Zap" },
+    { title: "CA Engine", desc: "Bihar-specific current affairs", icon: "BookOpen" }
+  ];
+
+  const getIcon = (name: string) => {
+    switch (name) {
+      case "TrendingUp": return <TrendingUp size={20} />;
+      case "Zap": return <Zap size={20} />;
+      case "BookOpen": return <BookOpen size={20} />;
+      default: return <TrendingUp size={20} />;
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20, textAlign: "center" }}>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        style={{ maxWidth: 600 }}
+      >
+        <div style={{
+          width: 80, height: 80, borderRadius: 20, fontSize: 40,
+          background: `linear-gradient(135deg, ${C.gemini}, ${C.claude})`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          margin: "0 auto 24px",
+          boxShadow: `0 0 30px ${C.geminiGlow}`,
+        }}>🧠</div>
+        <h1 style={{
+          fontFamily: "'Playfair Display', serif", fontWeight: 900,
+          fontSize: "clamp(32px, 8vw, 56px)",
+          background: `linear-gradient(90deg, ${C.gemini} 0%, ${C.claude} 50%, #fff 100%)`,
+          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          lineHeight: 1.1, marginBottom: 16
+        }}>{heroTitle}</h1>
+        <p style={{ color: C.muted, fontSize: 18, marginBottom: 32, lineHeight: 1.6 }}>
+          {heroSubtitle}
+        </p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 40 }}>
+          {features.map((f: any, i: number) => (
+            <FeatureCard key={i} icon={getIcon(f.icon)} title={f.title} desc={f.desc} />
+          ))}
+        </div>
+
+        <button
+          onClick={onLogin}
+          style={{
+            padding: "16px 32px", borderRadius: 12, border: "none",
+            background: `linear-gradient(135deg, ${C.gemini}, ${C.claude})`,
+            color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 12, margin: "0 auto",
+            boxShadow: `0 10px 20px -5px ${C.geminiGlow}`,
+          }}
+        >
+          <UserIcon size={20} />
+          Continue with Google
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
+function FeatureCard({ icon, title, desc }: any) {
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, textAlign: "left" }}>
+      <div style={{ color: C.gemini, marginBottom: 12 }}>{icon}</div>
+      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>{title}</h3>
+      <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>{desc}</p>
+    </div>
+  );
+}
+
+/* ─── SUBSCRIPTION VIEW ──────────────────────────────────────────────────── */
+function SubscriptionView({ profile, onBack }: any) {
+  const [loading, setLoading] = useState(false);
+
+  const handleSubscribe = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/create-razorpay-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: profile.uid }),
+      });
+      const order = await res.json();
+
+      const options = {
+        key: order.key,
+        amount: order.amount,
+        currency: order.currency,
+        name: "BPSC PT Predictor",
+        description: "Premium Access",
+        order_id: order.id,
+        handler: function (response: any) {
+          alert("Payment successful! Your account will be upgraded shortly.");
+          onBack();
+        },
+        prefill: {
+          name: profile.displayName,
+          email: profile.email,
+        },
+        theme: {
+          color: C.gemini,
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+    } catch (e) {
+      console.error(e);
+      alert("Failed to initiate payment. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 600, margin: "40px auto", padding: "0 20px" }}>
+      <button onClick={onBack} style={{ color: C.muted, background: "none", border: "none", cursor: "pointer", marginBottom: 20, display: "flex", alignItems: "center", gap: 8 }}>
+        ← Back to App
+      </button>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 24, padding: 40, textAlign: "center", position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: -50, right: -50, width: 150, height: 150, background: C.geminiGlow, borderRadius: "50%", filter: "blur(40px)" }} />
+        
+        <Zap size={48} color={C.amber} style={{ margin: "0 auto 20px" }} />
+        <h2 style={{ fontSize: 32, fontWeight: 900, marginBottom: 12 }}>Upgrade to Premium</h2>
+        <p style={{ color: C.muted, marginBottom: 32 }}>Unlock the full potential of BPSC PT Predictor with advanced AI features and unlimited rounds.</p>
+
+        <div style={{ textAlign: "left", background: C.card, borderRadius: 16, padding: 24, marginBottom: 32 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <CheckCircle2 size={20} color={C.green} />
+            <span style={{ fontSize: 14 }}>Unlimited Prediction Rounds</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <CheckCircle2 size={20} color={C.green} />
+            <span style={{ fontSize: 14 }}>Advanced Current Affairs Trend Mode</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <CheckCircle2 size={20} color={C.green} />
+            <span style={{ fontSize: 14 }}>Priority AI Processing (Advanced Models)</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <CheckCircle2 size={20} color={C.green} />
+            <span style={{ fontSize: 14 }}>Exclusive Bihar Budget & Survey Insights</span>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 32 }}>
+          <span style={{ fontSize: 48, fontWeight: 900 }}>₹499</span>
+          <span style={{ color: C.muted }}>/one-time</span>
+        </div>
+
+        <button
+          onClick={handleSubscribe}
+          disabled={loading || profile?.isPremium}
+          style={{
+            width: "100%", padding: "16px 0", borderRadius: 12, border: "none",
+            background: profile?.isPremium ? C.green : `linear-gradient(135deg, ${C.amber}, #f59e0b)`,
+            color: "#000", fontWeight: 800, fontSize: 16, cursor: profile?.isPremium ? "default" : "pointer",
+            boxShadow: `0 10px 20px -5px ${C.amberGlow}`,
+          }}
+        >
+          {profile?.isPremium ? "Already Premium" : loading ? "Redirecting..." : "Get Premium Access"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── ADMIN DASHBOARD ────────────────────────────────────────────────────── */
+function AdminDashboard({ onBack }: any) {
+  const [tab, setTab] = useState<"analytics" | "users" | "content" | "llms" | "pricing" | "notifications">("analytics");
+  const [stats, setStats] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [llms, setLlms] = useState<any[]>([]);
+  const [pricing, setPricing] = useState<any>({ premium: 499, enterprise: 4999 });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // Content States
+  const [hpConfig, setHpConfig] = useState<any>({ heroTitle: "", heroSubtitle: "", features: [] });
+  const [seo, setSeo] = useState<any>({ title: "", description: "", keywords: "" });
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        // Stats
+        const usersSnap = await getDocs(collection(db, "users"));
+        const allUsers = usersSnap.docs.map(d => d.data());
+        setUsers(allUsers);
+        
+        setStats({
+          totalUsers: allUsers.length,
+          premiumUsers: allUsers.filter((u: any) => u.isPremium).length,
+          revenue: allUsers.filter((u: any) => u.isPremium).length * 999, // Mock revenue calculation
+        });
+
+        // Configs
+        const hpSnap = await getDocs(query(collection(db, "config"), limit(10)));
+        hpSnap.docs.forEach(d => {
+          if (d.id === "homepage") setHpConfig(d.data());
+          if (d.id === "seo") setSeo(d.data());
+        });
+
+        // LLMs
+        const llmsSnap = await getDocs(collection(db, "llms"));
+        setLlms(llmsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+
+        // Pricing
+        const pricingSnap = await getDocs(collection(db, "pricing"));
+        const pricingData: any = {};
+        pricingSnap.docs.forEach(d => { pricingData[d.id] = d.data().price; });
+        if (Object.keys(pricingData).length > 0) setPricing({ ...pricing, ...pricingData });
+
+      } catch (e) {
+        handleFirestoreError(e, OperationType.LIST, "admin/data");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  const saveConfig = async (type: "homepage" | "seo", data: any) => {
+    setSaving(true);
+    try {
+      await setDoc(doc(db, "config", type), { ...data, updatedAt: new Date().toISOString() });
+      alert(`${type} configuration saved!`);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `config/${type}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateLLM = async (id: string, updates: any) => {
+    try {
+      await setDoc(doc(db, "llms", id), updates, { merge: true });
+      setLlms(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `llms/${id}`);
+    }
+  };
+
+  const setDefaultLLM = async (id: string) => {
+    try {
+      // Unset all others
+      const batch: any[] = [];
+      llms.forEach(m => {
+        if (m.id !== id && m.isDefault) {
+          batch.push(setDoc(doc(db, "llms", m.id), { isDefault: false }, { merge: true }));
+        }
+      });
+      // Set this one
+      batch.push(setDoc(doc(db, "llms", id), { isDefault: true, isEnabled: true }, { merge: true }));
+      await Promise.all(batch);
+      setLlms(prev => prev.map(m => ({ ...m, isDefault: m.id === id, isEnabled: m.id === id ? true : m.isEnabled })));
+      alert("Default model updated!");
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, "llms/setDefault");
+    }
+  };
+
+  const updatePrice = async (id: string, price: number) => {
+    try {
+      await setDoc(doc(db, "pricing", id), { price, updatedAt: new Date().toISOString() });
+      setPricing((prev: any) => ({ ...prev, [id]: price }));
+      alert("Price updated!");
+    } catch (e) {
+      alert("Failed to update price.");
+    }
+  };
+
+  const exportToCSV = () => {
+    const headers = ["Name", "Email", "Role", "Premium", "Joined"];
+    const rows = users.map(u => [
+      u.displayName,
+      u.email,
+      u.role,
+      u.isPremium ? "Yes" : "No",
+      new Date(u.createdAt).toLocaleDateString()
+    ]);
+    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute("download", `bpsc_users_export_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const seedLLMs = async () => {
+    const defaults = [
+      { id: "gemini", label: "Gemini 1.5 Pro", isEnabled: true, isDefault: true, isPremiumOnly: false, description: "Google's most capable model for complex reasoning and large context." },
+      { id: "claude", label: "Claude 3.5 Sonnet", isEnabled: true, isDefault: false, isPremiumOnly: true, description: "Anthropic's high-performance model with exceptional coding and writing skills." }
+    ];
+    for (const m of defaults) {
+      await setDoc(doc(db, "llms", m.id), m);
+    }
+    const llmsSnap = await getDocs(collection(db, "llms"));
+    setLlms(llmsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    alert("Default models seeded!");
+  };
+
+  const sendNotification = async (title: string, message: string, type: string, target: string) => {
+    try {
+      await addDoc(collection(db, "notifications"), {
+        title, message, type, target,
+        createdAt: new Date().toISOString()
+      });
+      alert("Notification sent!");
+    } catch (e) {
+      alert("Failed to send notification.");
+    }
+  };
+
+  if (loading) return <div style={{ height: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}><Loader label="Loading Admin Panel" accent={C.gemini} /></div>;
+
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "40px 20px 100px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
+        <div>
+          <button onClick={onBack} style={{ color: C.muted, background: "none", border: "none", cursor: "pointer", marginBottom: 8, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <X size={14} /> Close Admin
+          </button>
+          <h2 style={{ fontSize: 32, fontWeight: 900, fontFamily: "'Playfair Display', serif" }}>Enterprise Admin</h2>
+        </div>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button onClick={exportToCSV} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+            <Download size={16} /> Export CSV
+          </button>
+        </div>
+      </div>
+
+      {/* TABS */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 32, overflowX: "auto", paddingBottom: 8 }}>
+        <AdminTab active={tab === "analytics"} onClick={() => setTab("analytics")} icon={<BarChart3 size={16} />} label="Analytics" />
+        <AdminTab active={tab === "users"} onClick={() => setTab("users")} icon={<UserIcon size={16} />} label="Users" />
+        <AdminTab active={tab === "content"} onClick={() => setTab("content")} icon={<Layout size={16} />} label="Content" />
+        <AdminTab active={tab === "llms"} onClick={() => setTab("llms")} icon={<Cpu size={16} />} label="LLMs" />
+        <AdminTab active={tab === "pricing"} onClick={() => setTab("pricing")} icon={<DollarSign size={16} />} label="Pricing" />
+        <AdminTab active={tab === "notifications"} onClick={() => setTab("notifications")} icon={<Bell size={16} />} label="Notifications" />
+      </div>
+
+      {/* TAB CONTENT */}
+      <motion.div
+        key={tab}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        {tab === "analytics" && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20 }}>
+            <StatCard title="Total Users" value={stats.totalUsers} icon={<UserIcon size={20} />} trend="+12%" />
+            <StatCard title="Premium Users" value={stats.premiumUsers} icon={<Zap size={20} />} trend="+5%" />
+            <StatCard title="Total Revenue" value={`₹${stats.revenue}`} icon={<CreditCard size={20} />} trend="+8%" />
+            <StatCard title="AI Requests" value="1.2k" icon={<Cpu size={20} />} trend="+24%" />
+          </div>
+        )}
+
+        {tab === "users" && (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
+            <div style={{ padding: 20, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700 }}>User Management</h3>
+              <div style={{ position: "relative" }}>
+                <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: C.muted }} />
+                <input 
+                  placeholder="Search users..." 
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px 8px 34px", color: C.text, fontSize: 13, outline: "none" }} 
+                />
+              </div>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: C.muted, borderBottom: `1px solid ${C.border}` }}>
+                    <th style={{ padding: 16 }}>User</th>
+                    <th style={{ padding: 16 }}>Role</th>
+                    <th style={{ padding: 16 }}>Status</th>
+                    <th style={{ padding: 16 }}>Joined</th>
+                    <th style={{ padding: 16 }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.filter(u => u.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) || u.email?.toLowerCase().includes(searchQuery.toLowerCase())).map((u: any) => (
+                    <tr key={u.uid} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: 16 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <img src={u.photoURL} alt="" style={{ width: 28, height: 28, borderRadius: "50%" }} />
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{u.displayName}</div>
+                            <div style={{ fontSize: 11, color: C.muted }}>{u.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: 16 }}><Chip color={u.role === "admin" ? C.gemini : C.muted}>{u.role}</Chip></td>
+                      <td style={{ padding: 16 }}><Chip color={u.isPremium ? C.amber : C.green}>{u.isPremium ? "Premium" : "Free"}</Chip></td>
+                      <td style={{ padding: 16, color: C.muted }}>{new Date(u.createdAt).toLocaleDateString()}</td>
+                      <td style={{ padding: 16 }}>
+                        <button style={{ background: "none", border: "none", color: C.muted, cursor: "pointer" }}><Edit3 size={16} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === "content" && (
+          <div style={{ display: "grid", gap: 24 }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+                <Layout size={20} color={C.gemini} /> Homepage Content
+              </h3>
+              <div style={{ display: "grid", gap: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: C.muted, marginBottom: 6 }}>Hero Title</label>
+                  <input value={hpConfig.heroTitle} onChange={e => setHpConfig({ ...hpConfig, heroTitle: e.target.value })} style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: C.muted, marginBottom: 6 }}>Hero Subtitle</label>
+                  <textarea value={hpConfig.heroSubtitle} onChange={e => setHpConfig({ ...hpConfig, heroSubtitle: e.target.value })} style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none", minHeight: 80 }} />
+                </div>
+                <button onClick={() => saveConfig("homepage", hpConfig)} disabled={saving} style={{ padding: "12px 24px", borderRadius: 10, border: "none", background: C.gemini, color: "#fff", fontWeight: 700, cursor: "pointer", alignSelf: "flex-start" }}>
+                  {saving ? "Saving..." : "Save Homepage"}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+                <Globe size={20} color={C.claude} /> SEO Settings
+              </h3>
+              <div style={{ display: "grid", gap: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: C.muted, marginBottom: 6 }}>Meta Title</label>
+                  <input value={seo.title} onChange={e => setSeo({ ...seo, title: e.target.value })} style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: C.muted, marginBottom: 6 }}>Meta Description</label>
+                  <textarea value={seo.description} onChange={e => setSeo({ ...seo, description: e.target.value })} style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none", minHeight: 80 }} />
+                </div>
+                <button onClick={() => saveConfig("seo", seo)} disabled={saving} style={{ padding: "12px 24px", borderRadius: 10, border: "none", background: C.claude, color: "#fff", fontWeight: 700, cursor: "pointer", alignSelf: "flex-start" }}>
+                  {saving ? "Saving..." : "Save SEO"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "notifications" && (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Send System Notification</h3>
+            <div style={{ display: "grid", gap: 16 }}>
+              <input id="notif-title" placeholder="Notification Title" style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none" }} />
+              <textarea id="notif-msg" placeholder="Message content..." style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none", minHeight: 80 }} />
+              <div style={{ display: "flex", gap: 12 }}>
+                <select id="notif-type" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none" }}>
+                  <option value="info">Info</option>
+                  <option value="warning">Warning</option>
+                  <option value="success">Success</option>
+                </select>
+                <select id="notif-target" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, color: C.text, outline: "none" }}>
+                  <option value="all">All Users</option>
+                  <option value="premium">Premium Only</option>
+                  <option value="free">Free Only</option>
+                </select>
+              </div>
+              <button 
+                onClick={() => {
+                  const t = (document.getElementById("notif-title") as HTMLInputElement).value;
+                  const m = (document.getElementById("notif-msg") as HTMLTextAreaElement).value;
+                  const ty = (document.getElementById("notif-type") as HTMLSelectElement).value;
+                  const tr = (document.getElementById("notif-target") as HTMLSelectElement).value;
+                  if (t && m) sendNotification(t, m, ty, tr);
+                }}
+                style={{ padding: "12px 24px", borderRadius: 10, border: "none", background: C.amber, color: "#000", fontWeight: 700, cursor: "pointer", alignSelf: "flex-start" }}
+              >
+                Broadcast Notification
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab === "llms" && (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
+                <Cpu size={20} color={C.gemini} /> LLM Configurations
+              </h3>
+              {llms.length === 0 && (
+                <button onClick={seedLLMs} style={{ fontSize: 12, color: C.gemini, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+                  Seed Default Models
+                </button>
+              )}
+            </div>
+            <div style={{ display: "grid", gap: 20 }}>
+              {llms.map(m => (
+                <div key={m.id} style={{ padding: 20, background: C.surface, borderRadius: 12, border: `1px solid ${C.border}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>{m.label || m.id}</div>
+                      <div style={{ fontSize: 11, color: C.muted, fontFamily: "'JetBrains Mono', monospace" }}>ID: {m.id}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button 
+                        onClick={() => setDefaultLLM(m.id)}
+                        style={{ padding: "6px 12px", borderRadius: 6, background: m.isDefault ? C.gemini : C.surface, color: m.isDefault ? "#fff" : C.muted, border: `1px solid ${m.isDefault ? C.gemini : C.border}`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        {m.isDefault ? "Default" : "Set Default"}
+                      </button>
+                      <button 
+                        onClick={() => updateLLM(m.id, { isEnabled: !m.isEnabled })}
+                        style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: m.isEnabled ? C.green : C.muted, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        {m.isEnabled ? "Enabled" : "Disabled"}
+                      </button>
+                      <button 
+                        onClick={() => updateLLM(m.id, { isPremiumOnly: !m.isPremiumOnly })}
+                        style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${m.isPremiumOnly ? C.amber : C.border}`, background: m.isPremiumOnly ? `${C.amber}15` : "none", color: m.isPremiumOnly ? C.amber : C.muted, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        {m.isPremiumOnly ? "Premium Only" : "Public"}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gap: 12 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 4 }}>Model Label</label>
+                      <input 
+                        defaultValue={m.label} 
+                        onBlur={(e) => updateLLM(m.id, { label: e.target.value })}
+                        style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.text, fontSize: 13 }} 
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 4 }}>Description</label>
+                      <textarea 
+                        defaultValue={m.description} 
+                        onBlur={(e) => updateLLM(m.id, { description: e.target.value })}
+                        style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, color: C.text, fontSize: 13, minHeight: 60 }} 
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {llms.length === 0 && (
+                <div style={{ textAlign: "center", padding: 40, color: C.muted, border: `1px dashed ${C.border}`, borderRadius: 12 }}>
+                  No models configured. Click "Seed Default Models" to start.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === "pricing" && (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+              <DollarSign size={20} color={C.amber} /> Subscription Plans
+            </h3>
+            <div style={{ display: "grid", gap: 16 }}>
+              <div style={{ padding: 16, background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>Premium Monthly</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>Current Price: ₹{pricing.premium}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input id="price-premium" type="number" placeholder="New Price" style={{ width: 100, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: 8, color: C.text }} />
+                  <button 
+                    onClick={() => {
+                      const p = (document.getElementById("price-premium") as HTMLInputElement).value;
+                      if (p) updatePrice("premium", parseInt(p));
+                    }}
+                    style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: C.amber, color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+              <div style={{ padding: 16, background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>Enterprise Annual</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>Current Price: ₹{pricing.enterprise}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input id="price-enterprise" type="number" placeholder="New Price" style={{ width: 100, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: 8, color: C.text }} />
+                  <button 
+                    onClick={() => {
+                      const p = (document.getElementById("price-enterprise") as HTMLInputElement).value;
+                      if (p) updatePrice("enterprise", parseInt(p));
+                    }}
+                    style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: C.amber, color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <BPSCPredictor />
+    </ErrorBoundary>
+  );
+}
+
+function AdminTab({ active, onClick, icon, label }: any) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "10px 16px", borderRadius: 10, border: `1px solid ${active ? C.gemini : C.border}`,
+        background: active ? `${C.gemini}15` : C.surface,
+        color: active ? C.gemini : C.muted,
+        fontSize: 13, fontWeight: active ? 700 : 500, cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap",
+        transition: "all 0.2s"
+      }}
+    >
+      {icon} {label}
+    </button>
+  );
+}
+
+function StatCard({ title, value, icon, trend }: any) {
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 10, background: C.surface, display: "flex", alignItems: "center", justifyContent: "center", color: C.gemini }}>
+          {icon}
+        </div>
+        <div style={{ color: C.green, fontSize: 12, fontWeight: 700, background: `${C.green}10`, padding: "4px 8px", borderRadius: 6 }}>
+          {trend}
+        </div>
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 900, marginBottom: 4 }}>{value}</div>
+      <div style={{ color: C.muted, fontSize: 13, fontWeight: 500 }}>{title}</div>
     </div>
   );
 }

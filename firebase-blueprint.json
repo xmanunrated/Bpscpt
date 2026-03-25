@@ -1,0 +1,108 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Represents a user in the BPSC PT Predictor platform.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email", "description": "User's email address" },
+        "displayName": { "type": "string", "description": "User's display name" },
+        "photoURL": { "type": "string", "format": "uri", "description": "User's profile photo URL" },
+        "role": { "type": "string", "enum": ["user", "admin"], "description": "User's role in the platform" },
+        "isPremium": { "type": "boolean", "description": "Whether the user has a premium subscription" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user profile was created" },
+        "premiumSince": { "type": "string", "format": "date-time", "description": "When the user became a premium member" }
+      },
+      "required": ["uid", "email", "role", "isPremium", "createdAt"]
+    },
+    "HomepageConfig": {
+      "title": "Homepage Configuration",
+      "description": "Dynamic content for the landing page.",
+      "type": "object",
+      "properties": {
+        "heroTitle": { "type": "string" },
+        "heroSubtitle": { "type": "string" },
+        "features": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "desc": { "type": "string" }, "icon": { "type": "string" } } } },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SEOConfig": {
+      "title": "SEO Configuration",
+      "description": "Global SEO settings.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "keywords": { "type": "string" },
+        "ogImage": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "LLMConfig": {
+      "title": "LLM Configuration",
+      "description": "Settings for available LLM models.",
+      "type": "object",
+      "properties": {
+        "modelId": { "type": "string" },
+        "label": { "type": "string" },
+        "isEnabled": { "type": "boolean" },
+        "isDefault": { "type": "boolean" },
+        "isPremiumOnly": { "type": "boolean" },
+        "description": { "type": "string" }
+      }
+    },
+    "PricingConfig": {
+      "title": "Pricing Configuration",
+      "description": "Subscription plans and pricing.",
+      "type": "object",
+      "properties": {
+        "planId": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "currency": { "type": "string" },
+        "features": { "type": "array", "items": { "type": "string" } },
+        "isPopular": { "type": "boolean" }
+      }
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "System-wide or targeted notifications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["info", "warning", "success"] },
+        "target": { "type": "string", "enum": ["all", "premium", "free"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection of user profiles."
+    },
+    "/config/homepage": {
+      "schema": "HomepageConfig",
+      "description": "Singleton document for homepage content."
+    },
+    "/config/seo": {
+      "schema": "SEOConfig",
+      "description": "Singleton document for SEO settings."
+    },
+    "/llms/{modelId}": {
+      "schema": "LLMConfig",
+      "description": "Collection of LLM configurations."
+    },
+    "/pricing/{planId}": {
+      "schema": "PricingConfig",
+      "description": "Collection of pricing plans."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Collection of system notifications."
+    }
+  }
+}

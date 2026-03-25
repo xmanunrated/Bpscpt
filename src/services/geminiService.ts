@@ -1,7 +1,9 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 
-export const getGeminiResponse = async (apiKey: string, fileData: { type: string, data: string, name: string } | null, promptText: string) => {
-  const ai = new GoogleGenAI({ apiKey });
+export const getGeminiResponse = async (fileData: { type: string, data: string, name: string } | null, promptText: string) => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("Gemini API key is not configured. Please check your environment variables.");
+  const ai = new GoogleGenAI({ apiKey: key });
   
   const parts: any[] = [];
   if (fileData) {
@@ -19,13 +21,14 @@ export const getGeminiResponse = async (apiKey: string, fileData: { type: string
   parts.push({ text: promptText });
 
   const response: GenerateContentResponse = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3-flash-preview",
     contents: [{ parts }],
     config: {
       temperature: 0.3,
       maxOutputTokens: 4000,
       systemInstruction: "You are a BPSC PT exam expert. Return ONLY valid JSON. No markdown, no backticks, no explanation.",
-      responseMimeType: "application/json"
+      responseMimeType: "application/json",
+      // We don't use responseSchema here because the prompt can be used for different JSON structures (predictions vs CA vs validation)
     },
   });
 
@@ -33,9 +36,11 @@ export const getGeminiResponse = async (apiKey: string, fileData: { type: string
   if (!text) throw new Error("No response from Gemini");
   
   try {
-    return JSON.parse(text.replace(/```json|```/g, "").trim());
+    // Clean up any potential markdown formatting if the model ignored the instruction
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleaned);
   } catch (e) {
     console.error("Failed to parse JSON from Gemini:", text);
-    throw new Error("Invalid JSON response from AI");
+    throw new Error("Invalid JSON response from AI. Please try again.");
   }
 };
