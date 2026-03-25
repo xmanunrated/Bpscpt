@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { getGeminiResponse } from "./services/geminiService";
 
 /* ─── TOKENS ─────────────────────────────────────────────────────────────── */
@@ -158,6 +158,13 @@ async function callAI(model: string, geminiKey: string, fileData: any, promptTex
 /* ─── PROMPTS ────────────────────────────────────────────────────────────── */
 function predictPrompt(sourceYear: number, learningCtx: string) {
   return `Analyze this BPSC PT ${sourceYear} question paper and predict the most likely topics for the ${sourceYear + 1} exam.
+
+BIHAR-SPECIFIC ANALYSIS & PRIORITIZATION:
+1. Identify questions related to Bihar's History (Ancient to Modern), Geography (Rivers, Soils, Minerals), Economy (Budget, Survey), and Polity (Panchayati Raj).
+2. Prioritize topics that have appeared consistently over the last 3-5 years.
+3. Assign higher 'probability' to Bihar-specific topics if they are part of the 'Bihar Special' subject.
+4. Reflect this prioritization in 'subjectWeights', ensuring 'Bihar Special' has a significant weight (typically 20-30%).
+
 ${learningCtx ? `\nACCUMULATED LEARNINGS FROM PAST ROUNDS:\n${learningCtx}\nApply these learnings to sharpen predictions.\n` : ""}
 Return ONLY valid JSON:
 {
@@ -793,7 +800,7 @@ export default function BPSCPredictor() {
           {(phase === "PREDICTED" || phase === "DONE") && activeRound && (
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
-                <Pill n={1} done />
+                <Pill n={1} active={false} done />
                 <StepLine done />
                 <Pill n={2} active={phase === "PREDICTED"} done={phase === "DONE"} />
                 <StepLine done={phase === "DONE"} />
