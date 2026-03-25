@@ -1,0 +1,5 @@
+{
+  "name": "BPSC PT Predictor",
+  "description": "AI-powered exam topic predictor for BPSC Preliminary Test. Analyzes past papers, predicts future topics, and validates results to improve accuracy over time.",
+  "requestFramePermissions": []
+}
