@@ -1,18 +1,20 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
-export const getGeminiResponse = async (apiKey: string, fileData: { type: string, data: string, name: string }, promptText: string) => {
+export const getGeminiResponse = async (apiKey: string, fileData: { type: string, data: string, name: string } | null, promptText: string) => {
   const ai = new GoogleGenAI({ apiKey });
   
   const parts: any[] = [];
-  if (fileData.type === "pdf") {
-    parts.push({
-      inlineData: {
-        mimeType: "application/pdf",
-        data: fileData.data
-      }
-    });
-  } else {
-    parts.push({ text: `BPSC PT Question Paper Content:\n\n${fileData.data}` });
+  if (fileData) {
+    if (fileData.type === "pdf") {
+      parts.push({
+        inlineData: {
+          mimeType: "application/pdf",
+          data: fileData.data
+        }
+      });
+    } else {
+      parts.push({ text: `BPSC PT Question Paper Content:\n\n${fileData.data}` });
+    }
   }
   parts.push({ text: promptText });
 

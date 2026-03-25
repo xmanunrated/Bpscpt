@@ -155,17 +155,65 @@ async function callAI(model: string, geminiKey: string, fileData: any, promptTex
   return callClaude(fileData, promptText);
 }
 
+/* ─── TYPES ────────────────────────────────────────────────────────────────── */
+type CAMode = "daily" | "weekly" | "monthly" | "yearly" | "trend";
+
+interface CAQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  correctOption: number;
+  explanation: string;
+  category: string;
+  importance: number;
+}
+
 /* ─── PROMPTS ────────────────────────────────────────────────────────────── */
+function currentAffairsPrompt(mode: CAMode) {
+  const modeDesc = {
+    daily: "today's most relevant BPSC-focused news",
+    weekly: "the top BPSC-relevant news from the last 7 days",
+    monthly: "the most important BPSC-relevant news from the last 30 days",
+    yearly: "the major BPSC-relevant news from the last 365 days",
+    trend: "the most critical news from the last 12-15 months, specifically focusing on Bihar Economic Survey, Budget, and major schemes, which BPSC historically prioritizes."
+  };
+
+  return `Generate 10 BPSC-style multiple choice questions based on ${modeDesc[mode]}.
+  
+  BPSC TREND ANALYSIS FOR CURRENT AFFAIRS:
+  1. **Timeframe**: BPSC typically asks questions from the last 12-15 months.
+  2. **Bihar Special**: ~30-40% of CA questions are Bihar-specific (Budget, Economic Survey, Bihar Schemes).
+  3. **National/Intl**: Focus on Awards, Sports, Summits, and Indices.
+  4. **Question Style**: Factual, often with 'None of the above/More than one of the above' as an option (Option E style).
+
+  Return ONLY valid JSON:
+  {
+    "mode": "${mode}",
+    "insight": "A brief explanation of why these questions were selected based on BPSC trends.",
+    "questions": [
+      {
+        "id": "q1",
+        "question": "Question text?",
+        "options": ["A", "B", "C", "D", "E"],
+        "correctOption": 0,
+        "explanation": "Detailed explanation with context.",
+        "category": "Bihar Special",
+        "importance": 5
+      }
+    ]
+  }
+  Ensure high accuracy and BPSC relevance.`;
+}
+
 function predictPrompt(sourceYear: number, learningCtx: string) {
   return `Analyze this BPSC PT ${sourceYear} question paper and predict the most likely topics for the ${sourceYear + 1} exam.
 
 BIHAR-SPECIFIC ANALYSIS & PRIORITIZATION:
-1. Identify questions related to Bihar's History (Ancient to Modern), Geography (Rivers, Soils, Minerals), Economy (Budget, Survey), and Polity (Panchayati Raj).
-2. **Historical Frequency Analysis:** Use the 'ACCUMULATED LEARNINGS' (if provided) to track the frequency of Bihar-specific topics across multiple years. Topics that recur frequently or show an upward trend in importance must be prioritized.
-3. Prioritize topics that have appeared consistently over the last 3-5 years.
-4. Assign higher 'probability' to Bihar-specific topics, particularly those identified as high-frequency in the historical data.
-5. Reflect this prioritization in 'subjectWeights', ensuring 'Bihar Special' has a significant weight (typically 20-30%) that correlates with its historical frequency and importance.
-6. **Pattern Insight:** Generate a concise (2-3 sentences) summary in 'patternInsight' that details recurring Bihar-specific themes and their relative importance, directly informing the predicted topics and weights.
+1. **Historical Frequency Analysis:** Use the 'ACCUMULATED LEARNINGS' (if provided) to analyze the frequency of Bihar-specific topics (History, Geography, Economy, Polity) over the last 3-5 years.
+2. **Trend-Based Prioritization:** Prioritize topics that have appeared consistently over the last 3-5 years or show a clear upward trend in importance/frequency.
+3. **Dynamic Probability Adjustment:** This prioritization MUST be directly reflected in the 'topics' array's probability field. Topics with consistent or increasing historical trends should be assigned significantly higher probabilities (e.g., 85-95%).
+4. **Weighting:** The 'Bihar Special' subject weight (typically 25-35%) should be scaled based on the density and historical importance of Bihar-specific content identified.
+5. **Pattern Insight:** The 'patternInsight' field MUST provide a detailed summary of recurring Bihar-specific themes and their relative importance, based on this 3-5 year trend analysis.
 
 ${learningCtx ? `\nACCUMULATED LEARNINGS FROM PAST ROUNDS:\n${learningCtx}\nApply these learnings to sharpen predictions.\n` : ""}
 Return ONLY valid JSON:
@@ -173,7 +221,7 @@ Return ONLY valid JSON:
   "predictedForYear": ${sourceYear + 1},
   "confidence": 85,
   "totalTopicsFound": 20,
-  "patternInsight": "A concise (2-3 sentences) summary of recurring Bihar-specific themes and their relative importance based on historical frequency analysis, directly informing the predicted topics and weights.",
+  "patternInsight": "A detailed summary of recurring Bihar-specific themes and their relative importance based on historical frequency analysis, directly informing the predicted topics and weights (2-3 sentences).",
   "topics": [
     {
       "id": "slug-1",
@@ -337,6 +385,184 @@ function ModelSelector({ selected, onSelect, geminiKey, onGeminiKey }: any) {
           <p style={{ color: C.text, fontSize: 12, margin: 0 }}>
             Claude integration requires a server-side proxy.
           </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── CURRENT AFFAIRS ENGINE ──────────────────────────────────────────────── */
+function CurrentAffairsEngine({ apiKey, accent }: { apiKey: string, accent: string }) {
+  const [mode, setMode] = useState<CAMode>("daily");
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<{ insight: string, questions: CAQuestion[] } | null>(null);
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
+  const [showExplanations, setShowExplanations] = useState<Record<string, boolean>>({});
+
+  const generateCA = async (m: CAMode) => {
+    if (!apiKey) {
+      alert("Please enter your Gemini API key first.");
+      return;
+    }
+    setLoading(true);
+    setMode(m);
+    try {
+      const prompt = currentAffairsPrompt(m);
+      const res = await getGeminiResponse(apiKey, null, prompt);
+      setData(res);
+      setSelectedAnswers({});
+      setShowExplanations({});
+    } catch (error) {
+      console.error(error);
+      alert("Failed to generate current affairs. Check your API key and connection.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOptionClick = (qId: string, optIdx: number) => {
+    if (selectedAnswers[qId] !== undefined) return;
+    setSelectedAnswers(prev => ({ ...prev, [qId]: optIdx }));
+    setShowExplanations(prev => ({ ...prev, [qId]: true }));
+  };
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ color: C.text, fontSize: 18, fontWeight: 700, margin: 0 }}>Current Affairs Engine</h2>
+          <p style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>BPSC-specific trends & historical analysis</p>
+        </div>
+        <Chip color={accent}>v1.0</Chip>
+      </div>
+
+      {/* Mode Selector */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        {(["daily", "weekly", "monthly", "yearly", "trend"] as CAMode[]).map(m => (
+          <button
+            key={m}
+            onClick={() => generateCA(m)}
+            disabled={loading}
+            style={{
+              padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+              background: mode === m ? accent : C.surface,
+              color: mode === m ? "#000" : C.text,
+              border: `1px solid ${mode === m ? accent : C.border}`,
+              cursor: "pointer", textTransform: "capitalize",
+              transition: "all 0.2s", opacity: loading && mode !== m ? 0.5 : 1,
+            }}
+          >
+            {m} {m === "trend" && "🔥"}
+          </button>
+        ))}
+      </div>
+
+      {/* Selection Logic Info */}
+      <div style={{ 
+        background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, 
+        padding: "10px 14px", marginBottom: 24, display: "flex", alignItems: "center", gap: 10 
+      }}>
+        <span style={{ color: accent, fontSize: 14 }}>ⓘ</span>
+        <p style={{ color: C.muted, fontSize: 11, margin: 0, lineHeight: 1.4 }}>
+          <strong>Selection Logic:</strong> Prioritizing Bihar Budget, Economic Survey, and State Schemes (30-40% weightage). 
+          Focusing on 12-15 month window for National/Intl news as per BPSC 68th-70th patterns.
+        </p>
+      </div>
+
+      {loading && (
+        <div style={{ textAlign: "center", padding: "40px 0" }}>
+          <div style={{ color: accent, fontSize: 24, marginBottom: 12 }}>✦</div>
+          <p style={{ color: C.muted, fontSize: 13 }}>Analyzing BPSC trends and generating questions...</p>
+        </div>
+      )}
+
+      {data && !loading && (
+        <div style={{ animation: "fadeIn 0.5s ease-out" }}>
+          <div style={{
+            background: `${accent}08`, border: `1px solid ${accent}25`, borderRadius: 10,
+            padding: "12px 16px", marginBottom: 24, display: "flex", gap: 10,
+          }}>
+            <span style={{ fontSize: 18 }}>📈</span>
+            <p style={{ color: C.text, fontSize: 13, lineHeight: 1.5, margin: 0 }}>
+              <strong>Trend Insight:</strong> {data.insight}
+            </p>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {data.questions.map((q, idx) => (
+              <div key={q.id} style={{
+                background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                  <Chip color={q.category === "Bihar Special" ? C.amber : C.gemini}>{q.category}</Chip>
+                  <div style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                    IMPORTANCE: {Array(q.importance).fill("★").join("")}
+                  </div>
+                </div>
+                <h3 style={{ color: C.text, fontSize: 15, fontWeight: 600, lineHeight: 1.5, marginBottom: 16 }}>
+                  {idx + 1}. {q.question}
+                </h3>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {q.options.map((opt, optIdx) => {
+                    const isSelected = selectedAnswers[q.id] === optIdx;
+                    const isCorrect = optIdx === q.correctOption;
+                    const showResult = selectedAnswers[q.id] !== undefined;
+
+                    let bg = C.card;
+                    let border = C.border;
+                    let color = C.text;
+
+                    if (showResult) {
+                      if (isCorrect) {
+                        bg = `${C.green}15`;
+                        border = C.green;
+                        color = C.green;
+                      } else if (isSelected) {
+                        bg = `${C.red}15`;
+                        border = C.red;
+                        color = C.red;
+                      }
+                    }
+
+                    return (
+                      <button
+                        key={optIdx}
+                        onClick={() => handleOptionClick(q.id, optIdx)}
+                        style={{
+                          textAlign: "left", padding: "12px 16px", borderRadius: 8,
+                          background: bg, border: `1px solid ${border}`, color,
+                          fontSize: 13, cursor: showResult ? "default" : "pointer",
+                          transition: "all 0.2s",
+                        }}
+                      >
+                        <span style={{ marginRight: 10, opacity: 0.5, fontWeight: 700 }}>
+                          {String.fromCharCode(65 + optIdx)}.
+                        </span>
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+                {showExplanations[q.id] && (
+                  <div style={{
+                    marginTop: 16, padding: "12px 16px", background: C.dim,
+                    borderRadius: 8, borderLeft: `3px solid ${accent}`,
+                    animation: "slideDown 0.3s ease-out",
+                  }}>
+                    <p style={{ color: C.text, fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+                      <strong>Explanation:</strong> {q.explanation}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!data && !loading && (
+        <div style={{ textAlign: "center", padding: "40px 20px", border: `1px dashed ${C.border}`, borderRadius: 12 }}>
+          <p style={{ color: C.muted, fontSize: 13 }}>Select a mode above to start generating BPSC-specific current affairs questions.</p>
         </div>
       )}
     </div>
@@ -534,6 +760,7 @@ function RoundCard({ round, index, active, onClick }: any) {
 /* ─── MAIN APP ───────────────────────────────────────────────────────────── */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 export default function BPSCPredictor() {
+  const [mainView, setMainView] = useState<"predictor" | "ca">("predictor");
   const [rounds, setRounds] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [phase, setPhase] = useState("START");
@@ -658,9 +885,28 @@ export default function BPSCPredictor() {
                 background: `linear-gradient(90deg, ${C.gemini} 0%, ${C.claude} 50%, #fff 100%)`,
                 WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", lineHeight: 1.1,
               }}>BPSC PT Predictor</h1>
-              <p style={{ color: C.muted, fontSize: 11, marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }}>
-                Gemini + Claude · Self-learning · Validates & improves
-              </p>
+              <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+                <button
+                  onClick={() => setMainView("predictor")}
+                  style={{
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    color: mainView === "predictor" ? C.text : C.muted,
+                    fontSize: 11, fontWeight: mainView === "predictor" ? 800 : 400,
+                    fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "predictor" ? `2px solid ${accent}` : "none",
+                    paddingBottom: 2,
+                  }}
+                >PREDICTOR</button>
+                <button
+                  onClick={() => setMainView("ca")}
+                  style={{
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    color: mainView === "ca" ? C.text : C.muted,
+                    fontSize: 11, fontWeight: mainView === "ca" ? 800 : 400,
+                    fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "ca" ? `2px solid ${accent}` : "none",
+                    paddingBottom: 2,
+                  }}
+                >CA ENGINE 🔥</button>
+              </div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
@@ -678,7 +924,12 @@ export default function BPSCPredictor() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: rounds.length > 0 ? "190px 1fr" : "1fr", gap: 20 }}>
+      {mainView === "ca" ? (
+        <div className="animate-fade-up" style={{ marginTop: 20 }}>
+          <CurrentAffairsEngine apiKey={geminiKey} accent={accent} />
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: rounds.length > 0 ? "190px 1fr" : "1fr", gap: 20 }}>
 
         {/* SIDEBAR */}
         {rounds.length > 0 && (
@@ -900,6 +1151,7 @@ export default function BPSCPredictor() {
 
         </div>
       </div>
+      )}
     </div>
   );
 }
