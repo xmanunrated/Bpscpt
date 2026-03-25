@@ -161,9 +161,11 @@ function predictPrompt(sourceYear: number, learningCtx: string) {
 
 BIHAR-SPECIFIC ANALYSIS & PRIORITIZATION:
 1. Identify questions related to Bihar's History (Ancient to Modern), Geography (Rivers, Soils, Minerals), Economy (Budget, Survey), and Polity (Panchayati Raj).
-2. Prioritize topics that have appeared consistently over the last 3-5 years.
-3. Assign higher 'probability' to Bihar-specific topics if they are part of the 'Bihar Special' subject.
-4. Reflect this prioritization in 'subjectWeights', ensuring 'Bihar Special' has a significant weight (typically 20-30%).
+2. **Historical Frequency Analysis:** Use the 'ACCUMULATED LEARNINGS' (if provided) to track the frequency of Bihar-specific topics across multiple years. Topics that recur frequently or show an upward trend in importance must be prioritized.
+3. Prioritize topics that have appeared consistently over the last 3-5 years.
+4. Assign higher 'probability' to Bihar-specific topics, particularly those identified as high-frequency in the historical data.
+5. Reflect this prioritization in 'subjectWeights', ensuring 'Bihar Special' has a significant weight (typically 20-30%) that correlates with its historical frequency and importance.
+6. **Pattern Insight:** Generate a concise (2-3 sentences) summary in 'patternInsight' that details recurring Bihar-specific themes and their relative importance, directly informing the predicted topics and weights.
 
 ${learningCtx ? `\nACCUMULATED LEARNINGS FROM PAST ROUNDS:\n${learningCtx}\nApply these learnings to sharpen predictions.\n` : ""}
 Return ONLY valid JSON:
@@ -171,7 +173,7 @@ Return ONLY valid JSON:
   "predictedForYear": ${sourceYear + 1},
   "confidence": 85,
   "totalTopicsFound": 20,
-  "patternInsight": "Dominant focus on Bihar history and current environmental policies.",
+  "patternInsight": "A concise (2-3 sentences) summary of recurring Bihar-specific themes and their relative importance based on historical frequency analysis, directly informing the predicted topics and weights.",
   "topics": [
     {
       "id": "slug-1",
