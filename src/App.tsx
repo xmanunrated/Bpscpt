@@ -336,7 +336,7 @@ Return ONLY valid JSON:
       "difficulty": "Medium",
       "questionType": "factual",
       "likelyPattern": "Direct question on dates",
-      "historicalContext": "Detailed analysis of how often this topic appeared in past BPSC exams, its significance, and specific years/exams it was prominent in (e.g., 'A core pillar of BPSC History, appearing in 64th, 65th, 66th, and 68th PT with increasing focus on tribal revolts').",
+      "historicalContext": "Brief analysis of frequency in past BPSC exams (e.g., 'Appeared in 64th, 66th, and 68th PT').",
       "reasoning": "Historical trend"
     }
   ],
