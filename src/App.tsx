@@ -268,8 +268,8 @@ function currentAffairsPrompt(mode: CAMode, subject: CASubject = "All") {
     daily: "today's most relevant BPSC-focused news",
     weekly: "the top BPSC-relevant news from the last 7 days",
     monthly: "the most important BPSC-relevant news from the last 30 days",
-    yearly: "the major BPSC-relevant news from the last 365 days",
-    trend: "the most critical news from the last 12-15 months, specifically focusing on Bihar Economic Survey, Budget, and major schemes, which BPSC historically prioritizes."
+    yearly: "the major BPSC-relevant news from the last 12-18 months",
+    trend: "the most critical news from the last 12-18 months, specifically focusing on Bihar Economic Survey, Budget, and major schemes, which BPSC historically prioritizes."
   };
 
   const subjectFocus = subject === "All" 
@@ -304,6 +304,44 @@ function currentAffairsPrompt(mode: CAMode, subject: CASubject = "All") {
   Ensure high accuracy and BPSC relevance.`;
 }
 
+/* ─── CURATED CA PROMPT ────────────────────────────────────────────────── */
+function curatedCAPrompt(date: string, timeframe: string = "last 12-18 months") {
+  return `Generate a curated, comprehensive Current Affairs summary for BPSC PT preparation for the date: ${date}.
+  The content should cover the ${timeframe} window, focusing on the most relevant topics for the BPSC syllabus.
+  
+  STRUCTURE:
+  1. **Bihar Special**: Budget, Economic Survey, State Schemes, Bihar-specific awards, appointments, and sports.
+  2. **National**: Major government schemes, summits, reports, and indices.
+  3. **International**: Global summits, bilateral relations, and international organizations.
+  4. **Economy**: Banking, trade, and fiscal policies.
+  5. **Science & Tech**: Space missions, defense technology, and health.
+  6. **Sports & Awards**: Major national and international events.
+  
+  FORMAT:
+  - Subject-wise headings.
+  - Topic-wise bullet points.
+  - Concise, factual, and BPSC-oriented.
+  - Include a "BPSC Strategy Tip" for each subject.
+  
+  Return ONLY valid JSON:
+  {
+    "date": "${date}",
+    "content": "Full markdown content of the curated CA. Use proper headings and bullet points.",
+    "subjects": [
+      {
+        "name": "Bihar Special",
+        "topics": ["Topic 1", "Topic 2"]
+      },
+      {
+        "name": "National",
+        "topics": ["Topic 1", "Topic 2"]
+      }
+    ],
+    "type": "daily",
+    "createdAt": "${new Date().toISOString()}"
+  }`;
+}
+
 function predictPrompt(sourceYear: number, learningCtx: string, priorities: string[] = []) {
   const priorityText = priorities.length > 0 
     ? `\nUSER PRIORITIES (RANKED):\n${priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}\nIMPORTANT: Adjust the prediction algorithm to give these subjects/topics significantly more weight and focus. Ensure they are well-represented in the predicted topics and have higher probabilities if they show any relevance in the source paper or historical trends.\n`
@@ -318,6 +356,12 @@ BIHAR-SPECIFIC ANALYSIS & PRIORITIZATION:
 3. **Dynamic Probability Adjustment:** This prioritization MUST be directly reflected in the 'topics' array's probability field. Topics with consistent or increasing historical trends should be assigned significantly higher probabilities (e.g., 85-95%).
 4. **Weighting:** The 'Bihar Special' subject weight (typically 25-35%) should be scaled based on the density and historical importance of Bihar-specific content identified.
 5. **Pattern Insight:** The 'patternInsight' field MUST provide a detailed summary of recurring Bihar-specific themes and their relative importance, based on this 3-5 year trend analysis.
+
+DIFFICULTY ESTIMATION:
+For each predicted topic, estimate a 'difficulty' level ('Easy', 'Medium', 'Hard') based on:
+- **Topic Complexity:** How deep or technical the subject matter is.
+- **Question Type:** Whether questions are typically 'factual' (direct recall) or 'analytical' (conceptual/reasoning). Analytical questions increase difficulty.
+- **Historical Frequency:** Rare topics are often perceived as 'Hard' due to lack of study material/focus, while frequent topics are 'Easy' or 'Medium'.
 
 ${learningCtx ? `\nACCUMULATED LEARNINGS FROM PAST ROUNDS:\n${learningCtx}\nApply these learnings to sharpen predictions.\n` : ""}
 Return ONLY valid JSON:
@@ -358,17 +402,18 @@ Return ONLY valid JSON:
   "totalPredicted": ${predictions.topics.length},
   "confirmedCount": 12,
   "missedCount": 8,
-  "confirmed": [{"id":"slug-1","topic":"Topic","subject":"History","actualQuestion":"What happened in...?","matchStrength":"exact", "reasoning": "Strong justification for the match classification"}],
+  "confirmed": [{"id":"slug-1","topic":"Topic","subject":"History","actualQuestion":"What happened in...?","matchStrength":"exact", "reasoning": "Strong justification for the match classification based on topic overlap and question depth."}],
   "missed": [{"id":"slug-2","topic":"Topic","reason":"Not present"}],
-  "surprises": [{"topic":"New Topic","subject":"Science", "rationale": "Brief rationale for why this was missed, suggesting a potential new trend or shift in focus."}],
+  "surprises": [{"topic":"New Topic","subject":"Science", "rationale": "Brief rationale for why this was missed, suggesting a potential new trend or shift in focus based on BPSC patterns and source paper analysis."}],
   "refinedLearnings": "Updated findings",
   "keyImprovement": "Focus more on X"
 }
 Match Strength MUST be one of: 'exact', 'partial', or 'related'. 
 - 'exact': The topic and specific sub-topic match perfectly.
-- 'partial': The topic matches but the specific focus/sub-topic is different (e.g., predicting 'Geography' and getting 'Bihar's rivers').
+- 'partial': The topic matches but the specific focus/sub-topic is different. **CRITICAL:** Improve detection here—e.g., if I predicted 'Geography' and the paper had 'Bihar's rivers', that is a 'partial' match.
 - 'related': The topic is in the same broad category but a different area (e.g., predicting 'Indian National Movement' and getting 'Gandhi-Irwin Pact').
-Surprises should list topics that were NOT predicted but appeared in the actual paper, including a 'rationale' for the miss.`;
+
+For 'surprises', provide a brief 'rationale' for why it might have been missed. This rationale should be based on BPSC patterns and source paper analysis, suggesting potential new trends or shifts in focus.`;
 }
 
 /* ─── DROP ZONE ──────────────────────────────────────────────────────────── */
@@ -480,14 +525,64 @@ function ModelSelector({ selected, onSelect, configs, isPremium }: any) {
   );
 }
 
+function CuratedCAView({ ca, accent }: { ca: any, accent: string }) {
+  const downloadCA = () => {
+    const blob = new Blob([ca.content], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `BPSC_CA_${ca.date}_${ca.type}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <h3 style={{ color: C.text, fontSize: 16, fontWeight: 700, margin: 0 }}>Curated CA: {ca.date}</h3>
+          <p style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>{ca.type.toUpperCase()} SUMMARY • {ca.subjects?.length || 0} SUBJECTS</p>
+        </div>
+        <button 
+          onClick={downloadCA}
+          style={{ 
+            background: accent, color: "#000", border: "none", borderRadius: 8, 
+            padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 8
+          }}
+        >
+          <Download size={14} /> Download
+        </button>
+      </div>
+      
+      <div style={{ color: C.text, fontSize: 13, lineHeight: 1.6 }}>
+        <div className="markdown-body">
+          <Markdown>{ca.content}</Markdown>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── CURRENT AFFAIRS ENGINE ──────────────────────────────────────────────── */
-function CurrentAffairsEngine({ accent }: { accent: string }) {
+function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, user: User | null, isUserAdmin: boolean }) {
   const [mode, setMode] = useState<CAMode>("daily");
   const [subject, setSubject] = useState<CASubject>("All");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<{ insight: string, questions: CAQuestion[] } | null>(null);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
   const [showExplanations, setShowExplanations] = useState<Record<string, boolean>>({});
+  const [curatedList, setCuratedList] = useState<any[]>([]);
+  const [activeCurated, setActiveCurated] = useState<any | null>(null);
+  const [viewMode, setViewMode] = useState<"quiz" | "curated">("quiz");
+
+  useEffect(() => {
+    const q = query(collection(db, "current_affairs"), orderBy("date", "desc"), limit(10));
+    const unsub = onSnapshot(q, (snap) => {
+      setCuratedList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "current_affairs"));
+    return () => unsub();
+  }, []);
 
   const generateCA = async (m: CAMode, s: CASubject = subject) => {
     setLoading(true);
@@ -520,163 +615,272 @@ function CurrentAffairsEngine({ accent }: { accent: string }) {
           <h2 style={{ color: C.text, fontSize: 18, fontWeight: 700, margin: 0 }}>Current Affairs Engine</h2>
           <p style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>BPSC-specific trends & historical analysis</p>
         </div>
-        <Chip color={accent}>v1.0</Chip>
-      </div>
-
-      {/* Mode Selector */}
-      <div style={{ marginBottom: 16 }}>
-        <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Timeframe Mode</p>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {(["daily", "weekly", "monthly", "yearly", "trend"] as CAMode[]).map(m => (
-            <button
-              key={m}
-              onClick={() => generateCA(m, subject)}
-              disabled={loading}
-              style={{
-                padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                background: mode === m ? accent : C.surface,
-                color: mode === m ? "#000" : C.text,
-                border: `1px solid ${mode === m ? accent : C.border}`,
-                cursor: "pointer", textTransform: "capitalize",
-                transition: "all 0.2s", opacity: loading && mode !== m ? 0.5 : 1,
-              }}
-            >
-              {m} {m === "trend" && "🔥"}
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button 
+            onClick={() => setViewMode("quiz")}
+            style={{ 
+              background: viewMode === "quiz" ? accent : C.surface, 
+              color: viewMode === "quiz" ? "#000" : C.muted,
+              border: `1px solid ${viewMode === "quiz" ? accent : C.border}`,
+              borderRadius: 6, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer"
+            }}
+          >
+            QUIZ
+          </button>
+          <button 
+            onClick={() => setViewMode("curated")}
+            style={{ 
+              background: viewMode === "curated" ? accent : C.surface, 
+              color: viewMode === "curated" ? "#000" : C.muted,
+              border: `1px solid ${viewMode === "curated" ? accent : C.border}`,
+              borderRadius: 6, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer"
+            }}
+          >
+            CURATED
+          </button>
         </div>
       </div>
 
-      {/* Subject Selector */}
-      <div style={{ marginBottom: 24 }}>
-        <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Subject Focus</p>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {(["All", "Bihar Special", "National", "International", "Economy", "Science & Tech", "Sports", "Awards", "Appointments"] as CASubject[]).map(s => (
-            <button
-              key={s}
-              onClick={() => generateCA(mode, s)}
-              disabled={loading}
-              style={{
-                padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600,
-                background: subject === s ? `${accent}20` : C.surface,
-                color: subject === s ? accent : C.muted,
-                border: `1px solid ${subject === s ? accent : C.border}`,
-                cursor: "pointer",
-                transition: "all 0.2s", opacity: loading && subject !== s ? 0.5 : 1,
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Content Area */}
+      {viewMode === "quiz" ? (
+        <>
+          {/* Mode Selector */}
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Timeframe Mode</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(["daily", "weekly", "monthly", "yearly", "trend"] as CAMode[]).map(m => (
+                <button
+                  key={m}
+                  onClick={() => generateCA(m, subject)}
+                  disabled={loading}
+                  style={{
+                    padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                    background: mode === m ? accent : C.surface,
+                    color: mode === m ? "#000" : C.text,
+                    border: `1px solid ${mode === m ? accent : C.border}`,
+                    cursor: "pointer", textTransform: "capitalize",
+                    transition: "all 0.2s", opacity: loading && mode !== m ? 0.5 : 1,
+                  }}
+                >
+                  {m} {m === "trend" && "🔥"}
+                </button>
+              ))}
+            </div>
+          </div>
 
-      {/* Selection Logic Info */}
-      <div style={{ 
-        background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, 
-        padding: "10px 14px", marginBottom: 24, display: "flex", alignItems: "center", gap: 10 
-      }}>
-        <span style={{ color: accent, fontSize: 14 }}>ⓘ</span>
-        <p style={{ color: C.muted, fontSize: 11, margin: 0, lineHeight: 1.4 }}>
-          <strong>Selection Logic:</strong> {subject === "All" ? "Prioritizing Bihar Budget, Economic Survey, and State Schemes (30-40% weightage)." : `Focusing exclusively on ${subject} for BPSC PT.`} 
-          Focusing on 12-15 month window for news as per BPSC 68th-70th patterns.
-        </p>
-      </div>
+          {/* Subject Selector */}
+          <div style={{ marginBottom: 24 }}>
+            <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Subject Focus</p>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {(["All", "Bihar Special", "National", "International", "Economy", "Science & Tech", "Sports", "Awards", "Appointments"] as CASubject[]).map(s => (
+                <button
+                  key={s}
+                  onClick={() => generateCA(mode, s)}
+                  disabled={loading}
+                  style={{
+                    padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                    background: subject === s ? `${accent}20` : C.surface,
+                    color: subject === s ? accent : C.muted,
+                    border: `1px solid ${subject === s ? accent : C.border}`,
+                    cursor: "pointer",
+                    transition: "all 0.2s", opacity: loading && subject !== s ? 0.5 : 1,
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
 
-      {loading && (
-        <div style={{ textAlign: "center", padding: "40px 0" }}>
-          <div style={{ color: accent, fontSize: 24, marginBottom: 12 }}>✦</div>
-          <p style={{ color: C.muted, fontSize: 13 }}>Analyzing BPSC trends and generating questions...</p>
-        </div>
-      )}
-
-      {data && !loading && (
-        <div style={{ animation: "fadeIn 0.5s ease-out" }}>
-          <div style={{
-            background: `${accent}08`, border: `1px solid ${accent}25`, borderRadius: 10,
-            padding: "12px 16px", marginBottom: 24, display: "flex", gap: 10,
+          {/* Selection Logic Info */}
+          <div style={{ 
+            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, 
+            padding: "10px 14px", marginBottom: 24, display: "flex", alignItems: "center", gap: 10 
           }}>
-            <span style={{ fontSize: 18 }}>📈</span>
-            <p style={{ color: C.text, fontSize: 13, lineHeight: 1.5, margin: 0 }}>
-              <strong>Trend Insight:</strong> {data.insight}
+            <span style={{ color: accent, fontSize: 14 }}>ⓘ</span>
+            <p style={{ color: C.muted, fontSize: 11, margin: 0, lineHeight: 1.4 }}>
+              <strong>Selection Logic:</strong> {subject === "All" ? "Prioritizing Bihar Budget, Economic Survey, and State Schemes (30-40% weightage)." : `Focusing exclusively on ${subject} for BPSC PT.`} 
+              Focusing on 12-18 month window for news as per BPSC 68th-71st patterns.
             </p>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {data.questions.map((q, idx) => (
-              <div key={q.id} style={{
-                background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20,
+          {loading && (
+            <div style={{ textAlign: "center", padding: "40px 0" }}>
+              <div style={{ color: accent, fontSize: 24, marginBottom: 12 }}>✦</div>
+              <p style={{ color: C.muted, fontSize: 13 }}>Analyzing BPSC trends and generating questions...</p>
+            </div>
+          )}
+
+          {data && !loading && (
+            <div style={{ animation: "fadeIn 0.5s ease-out" }}>
+              <div style={{
+                background: `${accent}08`, border: `1px solid ${accent}25`, borderRadius: 10,
+                padding: "12px 16px", marginBottom: 24, display: "flex", gap: 10,
               }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                  <Chip color={q.category === "Bihar Special" ? C.amber : C.gemini}>{q.category}</Chip>
-                  <div style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-                    IMPORTANCE: {Array(q.importance).fill("★").join("")}
-                  </div>
-                </div>
-                <h3 style={{ color: C.text, fontSize: 15, fontWeight: 600, lineHeight: 1.5, marginBottom: 16 }}>
-                  {idx + 1}. {q.question}
-                </h3>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {q.options.map((opt, optIdx) => {
-                    const isSelected = selectedAnswers[q.id] === optIdx;
-                    const isCorrect = optIdx === q.correctOption;
-                    const showResult = selectedAnswers[q.id] !== undefined;
+                <span style={{ fontSize: 18 }}>📈</span>
+                <p style={{ color: C.text, fontSize: 13, lineHeight: 1.5, margin: 0 }}>
+                  <strong>Trend Insight:</strong> {data.insight}
+                </p>
+              </div>
 
-                    let bg = C.card;
-                    let border = C.border;
-                    let color = C.text;
-
-                    if (showResult) {
-                      if (isCorrect) {
-                        bg = `${C.green}15`;
-                        border = C.green;
-                        color = C.green;
-                      } else if (isSelected) {
-                        bg = `${C.red}15`;
-                        border = C.red;
-                        color = C.red;
-                      }
-                    }
-
-                    return (
-                      <button
-                        key={optIdx}
-                        onClick={() => handleOptionClick(q.id, optIdx)}
-                        style={{
-                          textAlign: "left", padding: "12px 16px", borderRadius: 8,
-                          background: bg, border: `1px solid ${border}`, color,
-                          fontSize: 13, cursor: showResult ? "default" : "pointer",
-                          transition: "all 0.2s",
-                        }}
-                      >
-                        <span style={{ marginRight: 10, opacity: 0.5, fontWeight: 700 }}>
-                          {String.fromCharCode(65 + optIdx)}.
-                        </span>
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-                {showExplanations[q.id] && (
-                  <div style={{
-                    marginTop: 16, padding: "12px 16px", background: C.dim,
-                    borderRadius: 8, borderLeft: `3px solid ${accent}`,
-                    animation: "slideDown 0.3s ease-out",
+              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                {data.questions.map((q, idx) => (
+                  <div key={q.id} style={{
+                    background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20,
                   }}>
-                    <p style={{ color: C.text, fontSize: 12, lineHeight: 1.6, margin: 0 }}>
-                      <strong>Explanation:</strong> {q.explanation}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                      <Chip color={q.category === "Bihar Special" ? C.amber : C.gemini}>{q.category}</Chip>
+                      <div style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                        IMPORTANCE: {Array(q.importance).fill("★").join("")}
+                      </div>
+                    </div>
+                    <h3 style={{ color: C.text, fontSize: 15, fontWeight: 600, lineHeight: 1.5, marginBottom: 16 }}>
+                      {idx + 1}. {q.question}
+                    </h3>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {q.options.map((opt, optIdx) => {
+                        const isSelected = selectedAnswers[q.id] === optIdx;
+                        const isCorrect = optIdx === q.correctOption;
+                        const showResult = selectedAnswers[q.id] !== undefined;
+
+                        let bg = C.card;
+                        let border = C.border;
+                        let color = C.text;
+
+                        if (showResult) {
+                          if (isCorrect) {
+                            bg = `${C.green}15`;
+                            border = C.green;
+                            color = C.green;
+                          } else if (isSelected) {
+                            bg = `${C.red}15`;
+                            border = C.red;
+                            color = C.red;
+                          }
+                        }
+
+                        return (
+                          <button
+                            key={optIdx}
+                            onClick={() => handleOptionClick(q.id, optIdx)}
+                            style={{
+                              textAlign: "left", padding: "12px 16px", borderRadius: 8,
+                              background: bg, border: `1px solid ${border}`, color,
+                              fontSize: 13, cursor: showResult ? "default" : "pointer",
+                              transition: "all 0.2s",
+                            }}
+                          >
+                            <span style={{ marginRight: 10, opacity: 0.5, fontWeight: 700 }}>
+                              {String.fromCharCode(65 + optIdx)}.
+                            </span>
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {showExplanations[q.id] && (
+                      <div style={{
+                        marginTop: 16, padding: "12px 16px", background: C.dim,
+                        borderRadius: 8, borderLeft: `3px solid ${accent}`,
+                        animation: "slideDown 0.3s ease-out",
+                      }}>
+                        <p style={{ color: C.text, fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+                          <strong>Explanation:</strong> {q.explanation}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!data && !loading && (
+            <div style={{ textAlign: "center", padding: "40px 20px", border: `1px dashed ${C.border}`, borderRadius: 12 }}>
+              <p style={{ color: C.muted, fontSize: 13 }}>Select a mode above to start generating BPSC-specific current affairs questions.</p>
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ animation: "fadeIn 0.5s ease-out" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 }}>Curated Summaries</p>
+            {isUserAdmin && (
+              <button 
+                onClick={async () => {
+                  setLoading(true);
+                  try {
+                    const today = new Date().toISOString().split('T')[0];
+                    const prompt = curatedCAPrompt(today);
+                    const res = await getGeminiResponse(null, prompt);
+                    await setDoc(doc(db, "current_affairs", today), res);
+                    alert("Today's Curated CA generated successfully!");
+                  } catch (error) {
+                    console.error(error);
+                    alert("Failed to generate curated CA.");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+                style={{ 
+                  background: `${accent}15`, color: accent, border: `1px solid ${accent}30`, 
+                  borderRadius: 6, padding: "4px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer"
+                }}
+              >
+                {loading ? "GENERATING..." : "GENERATE TODAY'S CA"}
+              </button>
+            )}
+          </div>
+
+          {activeCurated ? (
+            <div>
+              <button 
+                onClick={() => setActiveCurated(null)}
+                style={{ 
+                  background: "transparent", color: accent, border: "none", 
+                  fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 16,
+                  display: "flex", alignItems: "center", gap: 4
+                }}
+              >
+                ← Back to list
+              </button>
+              <CuratedCAView ca={activeCurated} accent={accent} />
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {curatedList.length > 0 ? curatedList.map(ca => (
+                <div 
+                  key={ca.id}
+                  onClick={() => setActiveCurated(ca)}
+                  style={{ 
+                    background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, 
+                    padding: "14px 16px", cursor: "pointer", transition: "all 0.2s",
+                    display: "flex", justifyContent: "space-between", alignItems: "center"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.borderColor = accent}
+                  onMouseLeave={(e) => e.currentTarget.style.borderColor = C.border}
+                >
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ color: C.text, fontWeight: 700, fontSize: 14 }}>{ca.date}</span>
+                      <Chip color={ca.type === "weekly" ? C.gemini : ca.type === "fortnightly" ? C.amber : C.green}>
+                        {ca.type || "daily"}
+                      </Chip>
+                    </div>
+                    <p style={{ color: C.muted, fontSize: 11, margin: 0 }}>
+                      {ca.subjects?.length || 0} Subjects covered • {ca.content?.length || 0} characters
                     </p>
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!data && !loading && (
-        <div style={{ textAlign: "center", padding: "40px 20px", border: `1px dashed ${C.border}`, borderRadius: 12 }}>
-          <p style={{ color: C.muted, fontSize: 13 }}>Select a mode above to start generating BPSC-specific current affairs questions.</p>
+                  <ArrowRight size={16} style={{ color: C.muted }} />
+                </div>
+              )) : (
+                <div style={{ textAlign: "center", padding: "40px 20px", border: `1px dashed ${C.border}`, borderRadius: 12 }}>
+                  <p style={{ color: C.muted, fontSize: 13 }}>No curated summaries found. {isUserAdmin && "Click 'Generate Today's CA' to create one."}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1279,6 +1483,48 @@ function BPSCPredictor() {
 
   const isUserAdmin = user?.email === "ankitrgpv@gmail.com" || profile?.role === "admin";
 
+  /* Auto CA Generator Hook */
+  useEffect(() => {
+    if (!user || !isUserAdmin) return;
+
+    const checkAndGenerate = async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const caRef = doc(db, "current_affairs", today);
+      
+      try {
+        const snap = await getDocFromServer(caRef);
+        if (!snap.exists()) {
+          const prompt = curatedCAPrompt(today);
+          const res = await getGeminiResponse(null, prompt);
+          await setDoc(caRef, res);
+          
+          // Check for weekly aggregation (every Sunday)
+          const dateObj = new Date();
+          if (dateObj.getDay() === 0) {
+            const weeklyId = `weekly_${today}`;
+            const weeklyPrompt = curatedCAPrompt(today, "last 7 days");
+            const weeklyRes = await getGeminiResponse(null, weeklyPrompt);
+            await setDoc(doc(db, "current_affairs", weeklyId), { ...weeklyRes, type: "weekly" });
+          }
+          
+          // Check for fortnightly aggregation (15th and last day of month)
+          const day = dateObj.getDate();
+          const lastDay = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
+          if (day === 15 || day === lastDay) {
+            const fortId = `fortnightly_${today}`;
+            const fortPrompt = curatedCAPrompt(today, "last 15 days");
+            const fortRes = await getGeminiResponse(null, fortPrompt);
+            await setDoc(doc(db, "current_affairs", fortId), { ...fortRes, type: "fortnightly" });
+          }
+        }
+      } catch (error) {
+        console.error("Auto CA Generation failed:", error);
+      }
+    };
+
+    checkAndGenerate();
+  }, [user, isUserAdmin]);
+
   /* Auth */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -1596,7 +1842,7 @@ function BPSCPredictor() {
 
       {mainView === "ca" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
-          <CurrentAffairsEngine accent={accent} />
+          <CurrentAffairsEngine accent={accent} user={user} isUserAdmin={isUserAdmin} />
         </div>
       ) : mainView === "dashboard" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>

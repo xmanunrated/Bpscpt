@@ -77,6 +77,28 @@
         "target": { "type": "string", "enum": ["all", "premium", "free"] },
         "createdAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "DailyCurrentAffairs": {
+      "title": "Daily Current Affairs",
+      "description": "Curated daily current affairs for BPSC PT.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date", "description": "The date of the CA" },
+        "content": { "type": "string", "description": "Markdown content of the CA" },
+        "subjects": { 
+          "type": "array", 
+          "items": { 
+            "type": "object", 
+            "properties": {
+              "name": { "type": "string" },
+              "topics": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "type": { "type": "string", "enum": ["daily", "weekly", "fortnightly"], "description": "Type of the CA entry" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "content", "type", "createdAt"]
     }
   },
   "firestore": {
@@ -103,6 +125,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "Collection of system notifications."
+    },
+    "/current_affairs/{caId}": {
+      "schema": "DailyCurrentAffairs",
+      "description": "Collection of curated current affairs."
     }
   }
 }
