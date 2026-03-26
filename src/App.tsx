@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { getGeminiResponse } from "./services/geminiService";
+import { getGeminiResponse, getGeminiTextResponse } from "./services/geminiService";
 import { auth, signInWithGoogle, logout, onAuthStateChanged, db, User } from "./firebase";
 import { doc, onSnapshot, collection, query, where, getDocs, setDoc, addDoc, deleteDoc, updateDoc, limit, orderBy, Timestamp, getDocFromServer } from "firebase/firestore";
 import { LogOut, User as UserIcon, Shield, CreditCard, TrendingUp, BookOpen, Zap, CheckCircle2, ArrowRight, Layout, Globe, Cpu, DollarSign, Bell, BarChart3, Download, Plus, Trash2, Save, Edit3, X, Search, Filter, Lock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import Markdown from "react-markdown";
 
 /* ─── TOKENS ─────────────────────────────────────────────────────────────── */
 const C = {
@@ -249,6 +250,7 @@ async function callAI(model: string, fileData: any, promptText: string) {
 
 /* ─── TYPES ────────────────────────────────────────────────────────────────── */
 type CAMode = "daily" | "weekly" | "monthly" | "yearly" | "trend";
+type CASubject = "All" | "Bihar Special" | "National" | "International" | "Economy" | "Science & Tech" | "Sports" | "Awards" | "Appointments";
 
 interface CAQuestion {
   id: string;
@@ -261,7 +263,7 @@ interface CAQuestion {
 }
 
 /* ─── PROMPTS ────────────────────────────────────────────────────────────── */
-function currentAffairsPrompt(mode: CAMode) {
+function currentAffairsPrompt(mode: CAMode, subject: CASubject = "All") {
   const modeDesc = {
     daily: "today's most relevant BPSC-focused news",
     weekly: "the top BPSC-relevant news from the last 7 days",
@@ -270,7 +272,11 @@ function currentAffairsPrompt(mode: CAMode) {
     trend: "the most critical news from the last 12-15 months, specifically focusing on Bihar Economic Survey, Budget, and major schemes, which BPSC historically prioritizes."
   };
 
-  return `Generate 10 BPSC-style multiple choice questions based on ${modeDesc[mode]}.
+  const subjectFocus = subject === "All" 
+    ? "a balanced mix of all BPSC Current Affairs subjects (Bihar Special, National, International, Economy, Science, Sports, Awards)."
+    : `specifically focusing on the '${subject}' subject of the BPSC Current Affairs syllabus.`;
+
+  return `Generate 10 BPSC-style multiple choice questions based on ${modeDesc[mode]}, ${subjectFocus}.
   
   BPSC TREND ANALYSIS FOR CURRENT AFFAIRS:
   1. **Timeframe**: BPSC typically asks questions from the last 12-15 months.
@@ -281,7 +287,8 @@ function currentAffairsPrompt(mode: CAMode) {
   Return ONLY valid JSON:
   {
     "mode": "${mode}",
-    "insight": "A brief explanation of why these questions were selected based on BPSC trends.",
+    "subject": "${subject}",
+    "insight": "A brief explanation of why these questions were selected based on BPSC trends for this specific subject and mode.",
     "questions": [
       {
         "id": "q1",
@@ -289,7 +296,7 @@ function currentAffairsPrompt(mode: CAMode) {
         "options": ["A", "B", "C", "D", "E"],
         "correctOption": 0,
         "explanation": "Detailed explanation with context.",
-        "category": "Bihar Special",
+        "category": "${subject === "All" ? "Bihar Special" : subject}",
         "importance": 5
       }
     ]
@@ -297,9 +304,14 @@ function currentAffairsPrompt(mode: CAMode) {
   Ensure high accuracy and BPSC relevance.`;
 }
 
-function predictPrompt(sourceYear: number, learningCtx: string) {
+function predictPrompt(sourceYear: number, learningCtx: string, priorities: string[] = []) {
+  const priorityText = priorities.length > 0 
+    ? `\nUSER PRIORITIES (RANKED):\n${priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}\nIMPORTANT: Adjust the prediction algorithm to give these subjects/topics significantly more weight and focus. Ensure they are well-represented in the predicted topics and have higher probabilities if they show any relevance in the source paper or historical trends.\n`
+    : "";
+
   return `Analyze this BPSC PT ${sourceYear} question paper and predict the most likely topics for the ${sourceYear + 1} exam.
 
+${priorityText}
 BIHAR-SPECIFIC ANALYSIS & PRIORITIZATION:
 1. **Historical Frequency Analysis:** Use the 'ACCUMULATED LEARNINGS' (if provided) to analyze the frequency of Bihar-specific topics (History, Geography, Economy, Polity) over the last 3-5 years.
 2. **Trend-Based Prioritization:** Prioritize topics that have appeared consistently over the last 3-5 years or show a clear upward trend in importance/frequency.
@@ -318,10 +330,13 @@ Return ONLY valid JSON:
     {
       "id": "slug-1",
       "topic": "Topic Name",
+      "subTopics": ["Sub-topic 1", "Sub-topic 2"],
       "subject": "History",
       "probability": 85,
+      "difficulty": "Medium",
       "questionType": "factual",
       "likelyPattern": "Direct question on dates",
+      "historicalContext": "Detailed analysis of how often this topic appeared in past BPSC exams, its significance, and specific years/exams it was prominent in (e.g., 'A core pillar of BPSC History, appearing in 64th, 65th, 66th, and 68th PT with increasing focus on tribal revolts').",
       "reasoning": "Historical trend"
     }
   ],
@@ -343,12 +358,17 @@ Return ONLY valid JSON:
   "totalPredicted": ${predictions.topics.length},
   "confirmedCount": 12,
   "missedCount": 8,
-  "confirmed": [{"id":"slug-1","topic":"Topic","subject":"History","actualQuestion":"What happened in...?","matchStrength":"exact"}],
+  "confirmed": [{"id":"slug-1","topic":"Topic","subject":"History","actualQuestion":"What happened in...?","matchStrength":"exact", "reasoning": "Strong justification for the match classification"}],
   "missed": [{"id":"slug-2","topic":"Topic","reason":"Not present"}],
-  "surprises": [{"topic":"New Topic","subject":"Science"}],
+  "surprises": [{"topic":"New Topic","subject":"Science", "rationale": "Brief rationale for why this was missed, suggesting a potential new trend or shift in focus."}],
   "refinedLearnings": "Updated findings",
   "keyImprovement": "Focus more on X"
-}`;
+}
+Match Strength MUST be one of: 'exact', 'partial', or 'related'. 
+- 'exact': The topic and specific sub-topic match perfectly.
+- 'partial': The topic matches but the specific focus/sub-topic is different (e.g., predicting 'Geography' and getting 'Bihar's rivers').
+- 'related': The topic is in the same broad category but a different area (e.g., predicting 'Indian National Movement' and getting 'Gandhi-Irwin Pact').
+Surprises should list topics that were NOT predicted but appeared in the actual paper, including a 'rationale' for the miss.`;
 }
 
 /* ─── DROP ZONE ──────────────────────────────────────────────────────────── */
@@ -463,16 +483,18 @@ function ModelSelector({ selected, onSelect, configs, isPremium }: any) {
 /* ─── CURRENT AFFAIRS ENGINE ──────────────────────────────────────────────── */
 function CurrentAffairsEngine({ accent }: { accent: string }) {
   const [mode, setMode] = useState<CAMode>("daily");
+  const [subject, setSubject] = useState<CASubject>("All");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<{ insight: string, questions: CAQuestion[] } | null>(null);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
   const [showExplanations, setShowExplanations] = useState<Record<string, boolean>>({});
 
-  const generateCA = async (m: CAMode) => {
+  const generateCA = async (m: CAMode, s: CASubject = subject) => {
     setLoading(true);
     setMode(m);
+    setSubject(s);
     try {
-      const prompt = currentAffairsPrompt(m);
+      const prompt = currentAffairsPrompt(m, s);
       const res = await getGeminiResponse(null, prompt);
       setData(res);
       setSelectedAnswers({});
@@ -502,24 +524,51 @@ function CurrentAffairsEngine({ accent }: { accent: string }) {
       </div>
 
       {/* Mode Selector */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-        {(["daily", "weekly", "monthly", "yearly", "trend"] as CAMode[]).map(m => (
-          <button
-            key={m}
-            onClick={() => generateCA(m)}
-            disabled={loading}
-            style={{
-              padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-              background: mode === m ? accent : C.surface,
-              color: mode === m ? "#000" : C.text,
-              border: `1px solid ${mode === m ? accent : C.border}`,
-              cursor: "pointer", textTransform: "capitalize",
-              transition: "all 0.2s", opacity: loading && mode !== m ? 0.5 : 1,
-            }}
-          >
-            {m} {m === "trend" && "🔥"}
-          </button>
-        ))}
+      <div style={{ marginBottom: 16 }}>
+        <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Timeframe Mode</p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(["daily", "weekly", "monthly", "yearly", "trend"] as CAMode[]).map(m => (
+            <button
+              key={m}
+              onClick={() => generateCA(m, subject)}
+              disabled={loading}
+              style={{
+                padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                background: mode === m ? accent : C.surface,
+                color: mode === m ? "#000" : C.text,
+                border: `1px solid ${mode === m ? accent : C.border}`,
+                cursor: "pointer", textTransform: "capitalize",
+                transition: "all 0.2s", opacity: loading && mode !== m ? 0.5 : 1,
+              }}
+            >
+              {m} {m === "trend" && "🔥"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Subject Selector */}
+      <div style={{ marginBottom: 24 }}>
+        <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Subject Focus</p>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {(["All", "Bihar Special", "National", "International", "Economy", "Science & Tech", "Sports", "Awards", "Appointments"] as CASubject[]).map(s => (
+            <button
+              key={s}
+              onClick={() => generateCA(mode, s)}
+              disabled={loading}
+              style={{
+                padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                background: subject === s ? `${accent}20` : C.surface,
+                color: subject === s ? accent : C.muted,
+                border: `1px solid ${subject === s ? accent : C.border}`,
+                cursor: "pointer",
+                transition: "all 0.2s", opacity: loading && subject !== s ? 0.5 : 1,
+              }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Selection Logic Info */}
@@ -529,8 +578,8 @@ function CurrentAffairsEngine({ accent }: { accent: string }) {
       }}>
         <span style={{ color: accent, fontSize: 14 }}>ⓘ</span>
         <p style={{ color: C.muted, fontSize: 11, margin: 0, lineHeight: 1.4 }}>
-          <strong>Selection Logic:</strong> Prioritizing Bihar Budget, Economic Survey, and State Schemes (30-40% weightage). 
-          Focusing on 12-15 month window for National/Intl news as per BPSC 68th-70th patterns.
+          <strong>Selection Logic:</strong> {subject === "All" ? "Prioritizing Bihar Budget, Economic Survey, and State Schemes (30-40% weightage)." : `Focusing exclusively on ${subject} for BPSC PT.`} 
+          Focusing on 12-15 month window for news as per BPSC 68th-70th patterns.
         </p>
       </div>
 
@@ -634,10 +683,48 @@ function CurrentAffairsEngine({ accent }: { accent: string }) {
   );
 }
 
+/* ─── SPARKLINE ──────────────────────────────────────────────────────────── */
+function Sparkline({ data, color }: { data: number[], color: string }) {
+  if (data.length < 2) return null;
+  const width = 40;
+  const height = 14;
+  const max = 100;
+  const min = 0;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - ((v - min) / (max - min)) * height;
+    return `${x},${y}`;
+  }).join(" ");
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <svg width={width} height={height} style={{ overflow: "visible" }}>
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={points}
+          style={{ opacity: 0.8 }}
+        />
+        <circle cx={width} cy={height - ((data[data.length - 1] - min) / (max - min)) * height} r="2" fill={color} />
+      </svg>
+    </div>
+  );
+}
+
 /* ─── PREDICTION VIEW ────────────────────────────────────────────────────── */
-function PredictionView({ predictions, validation, accent }: any) {
+function PredictionView({ predictions, validation, accent, priorities, rounds = [] }: any) {
   const [filter, setFilter] = useState("All");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [difficultyFilter, setDifficultyFilter] = useState("All");
+  const [matchFilter, setMatchFilter] = useState("All");
+  const [expandedReasoning, setExpandedReasoning] = useState<string | null>(null);
+
   const subjects = ["All", ...new Set(predictions.topics.map((t: any) => t.subject)) as Set<string>];
+  const difficulties = ["All", "Easy", "Medium", "Hard"];
+  const matchStrengths = ["All", "exact", "partial", "related"];
 
   const getStatus = (t: any) => {
     if (!validation) return "pending";
@@ -648,7 +735,29 @@ function PredictionView({ predictions, validation, accent }: any) {
 
   const getMatch = (t: any) => validation?.confirmed?.find((c: any) => c.id === t.id);
 
-  const filtered = predictions.topics.filter((t: any) => filter === "All" || t.subject === filter);
+  const getTrend = (topicId: string) => {
+    const history = rounds
+      .filter((r: any) => r.predictions?.topics)
+      .map((r: any) => r.predictions.topics.find((t: any) => t.id === topicId)?.probability)
+      .filter((v: any) => v !== undefined)
+      .slice(-5);
+    return history;
+  };
+
+  const filtered = predictions.topics.filter((t: any) => {
+    const matchesSubject = filter === "All" || t.subject === filter;
+    const matchesDifficulty = difficultyFilter === "All" || t.difficulty === difficultyFilter;
+    const matchesSearch = t.topic.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         t.subTopics?.some((st: string) => st.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    let matchesMatch = true;
+    if (matchFilter !== "All") {
+      const m = getMatch(t);
+      matchesMatch = m?.matchStrength === matchFilter;
+    }
+
+    return matchesSubject && matchesDifficulty && matchesSearch && matchesMatch;
+  });
 
   return (
     <div>
@@ -672,6 +781,27 @@ function PredictionView({ predictions, validation, accent }: any) {
           </div>
         ))}
       </div>
+
+      {/* Priorities */}
+      {priorities?.length > 0 && (
+        <div style={{
+          background: `${accent}05`, border: `1px solid ${C.border}`, borderRadius: 10,
+          padding: "10px 14px", marginBottom: 14,
+        }}>
+          <p style={{ color: C.muted, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 6px", textTransform: "uppercase" }}>User Priorities</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {priorities.map((p: string, i: number) => (
+              <span key={i} style={{ 
+                background: `${accent}15`, color: accent, borderRadius: 6, 
+                padding: "2px 8px", fontSize: 11, fontWeight: 600,
+                display: "flex", alignItems: "center", gap: 4
+              }}>
+                <span style={{ opacity: 0.6 }}>{i + 1}.</span> {p}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Insight */}
       <div style={{
@@ -712,17 +842,68 @@ function PredictionView({ predictions, validation, accent }: any) {
           {validation.surprises?.length > 0 && (
             <div style={{ background: `${C.red}08`, border: `1px solid ${C.red}25`, borderRadius: 10, padding: "10px 14px", marginTop: 10 }}>
               <p style={{ color: C.red, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 8px" }}>⚡ SURPRISE TOPICS (NOT PREDICTED)</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {validation.surprises.map((s: any, i: number) => (
-                  <span key={i} style={{ background: C.surface, border: `1px solid ${C.red}30`, color: C.text, borderRadius: 6, padding: "3px 10px", fontSize: 11 }}>
-                    {s.topic}
-                  </span>
+                  <div key={i} style={{ background: C.surface, border: `1px solid ${C.red}30`, borderRadius: 8, padding: "8px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ color: C.text, fontWeight: 700, fontSize: 12 }}>{s.topic}</span>
+                      <Chip color={C.red}>{s.subject}</Chip>
+                    </div>
+                    {s.rationale && (
+                      <p style={{ color: C.muted, fontSize: 11, margin: 0, fontStyle: "italic" }}>
+                        <span style={{ color: C.red, opacity: 0.8 }}>Rationale:</span> {s.rationale}
+                      </p>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
           )}
         </div>
       )}
+
+      {/* Advanced Filters */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.muted }} />
+            <input 
+              type="text" 
+              placeholder="Search topics or sub-topics..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+                padding: "8px 12px 8px 32px", fontSize: 12, color: C.text, outline: "none"
+              }}
+            />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Difficulty:</span>
+            <select 
+              value={difficultyFilter} 
+              onChange={(e) => setDifficultyFilter(e.target.value)}
+              style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, borderRadius: 6, padding: "2px 6px" }}
+            >
+              {difficulties.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          {validation && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Match:</span>
+              <select 
+                value={matchFilter} 
+                onChange={(e) => setMatchFilter(e.target.value)}
+                style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, borderRadius: 6, padding: "2px 6px" }}
+              >
+                {matchStrengths.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Subject filter */}
       <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, marginBottom: 12 }}>
@@ -752,20 +933,91 @@ function PredictionView({ predictions, validation, accent }: any) {
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
                   <Chip color={sc}>{status === "hit" ? "✓ HIT" : status === "miss" ? "✗ MISS" : `${topic.probability}%`}</Chip>
                   <Chip color={accent}>{topic.subject}</Chip>
+                  {topic.difficulty && (
+                    <Chip color={topic.difficulty === 'Hard' ? C.red : topic.difficulty === 'Medium' ? C.amber : C.green}>
+                      {topic.difficulty}
+                    </Chip>
+                  )}
                   <Chip color={C.muted}>{topic.questionType}</Chip>
+                  <Sparkline data={getTrend(topic.id)} color={accent} />
+                  
+                  <button 
+                    onClick={() => setExpandedReasoning(expandedReasoning === topic.id ? null : topic.id)}
+                    style={{
+                      background: "none", border: "none", color: accent, fontSize: 10, 
+                      cursor: "pointer", padding: "2px 6px", borderRadius: 4,
+                      display: "flex", alignItems: "center", gap: 4,
+                      marginLeft: "auto", fontWeight: 600
+                    }}
+                  >
+                    <Zap size={10} /> Why?
+                  </button>
                 </div>
                 <p style={{ color: C.text, fontWeight: 700, fontSize: 14, margin: "0 0 4px" }}>{topic.topic}</p>
-                <p style={{ color: C.muted, fontSize: 11, margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>
+                
+                {expandedReasoning === topic.id && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    style={{ 
+                      background: `${accent}08`, border: `1px solid ${accent}25`, 
+                      borderRadius: 8, padding: "10px 12px", marginBottom: 10,
+                      fontSize: 11, color: C.text, lineHeight: 1.5
+                    }}
+                  >
+                    <strong style={{ color: accent, display: "block", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Prediction Rationale</strong>
+                    {topic.reasoning}
+                  </motion.div>
+                )}
+                
+                {topic.subTopics?.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                    {topic.subTopics.map((st: string, idx: number) => (
+                      <span key={idx} style={{ fontSize: 9, background: C.dim, color: C.muted, padding: "1px 6px", borderRadius: 4 }}>
+                        {st}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <p style={{ color: C.muted, fontSize: 11, margin: "0 0 4px", fontFamily: "'JetBrains Mono', monospace" }}>
                   Pattern: {topic.likelyPattern}
                 </p>
+
+                {topic.historicalContext && (
+                  <div style={{ display: "flex", gap: 4, alignItems: "flex-start", marginBottom: 4 }}>
+                    <span style={{ fontSize: 10 }}>📜</span>
+                    <p style={{ color: C.muted, fontSize: 10, fontStyle: "italic", margin: 0 }}>
+                      {topic.historicalContext}
+                    </p>
+                  </div>
+                )}
                 {match && (
                   <div style={{ marginTop: 8, background: `${C.green}08`, border: `1px solid ${C.green}25`, borderRadius: 6, padding: "6px 10px" }}>
-                    <p style={{ color: C.green, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", margin: 0 }}>
-                      ACTUAL: {match.actualQuestion}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <p style={{ color: C.green, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", margin: 0, textTransform: "uppercase" }}>
+                        Actual Match
+                      </p>
+                      {match.matchStrength && (
+                        <span style={{ 
+                          fontSize: 9, background: match.matchStrength === 'exact' ? C.green : match.matchStrength === 'partial' ? C.amber : C.muted,
+                          color: "#000", padding: "1px 6px", borderRadius: 4, fontWeight: 700, textTransform: "uppercase"
+                        }}>
+                          {match.matchStrength}
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ color: C.green, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 4px" }}>
+                      {match.actualQuestion}
                     </p>
+                    {match.reasoning && (
+                      <p style={{ color: C.muted, fontSize: 10, margin: 0, fontStyle: "italic" }}>
+                        {match.reasoning}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -804,7 +1056,11 @@ function RoundCard({ round, index, active, onClick }: any) {
           <div style={{ display: "flex", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
             <Chip color={done ? C.green : active ? m.accent : C.muted}>Round {index + 1}</Chip>
             <Chip color={m.accent}>{m.icon} {m.label.split(" ")[0]}</Chip>
-            {done && <Chip color={round.validation.overallAccuracy >= 80 ? C.green : C.amber}>{round.validation.overallAccuracy}%</Chip>}
+            {done ? (
+              <Chip color={round.validation.overallAccuracy >= 80 ? C.green : C.amber}>{round.validation.overallAccuracy}%</Chip>
+            ) : (
+              <Chip color={C.amber}>Needs Validation</Chip>
+            )}
           </div>
           <p style={{ color: C.text, fontSize: 13, fontWeight: 600, margin: 0 }}>
             {round.sourceYear} → {round.sourceYear + 1}
@@ -822,20 +1078,191 @@ function RoundCard({ round, index, active, onClick }: any) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
+/* ─── PERSONALIZED DASHBOARD ────────────────────────────────────────────── */
+function PersonalizedDashboard({ rounds, accent }: { rounds: any[], accent: string }) {
+  const [strategy, setStrategy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const validatedRounds = rounds.filter(r => r.validation);
+  const pendingRounds = rounds.filter(r => !r.validation);
+
+  if (validatedRounds.length === 0) {
+    return (
+      <div style={{ 
+        textAlign: "center", 
+        padding: "60px 20px", 
+        background: `linear-gradient(180deg, ${C.surface} 0%, transparent 100%)`,
+        border: `1px dashed ${C.border}`, 
+        borderRadius: 24,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 20
+      }}>
+        <div style={{ 
+          width: 80, height: 80, borderRadius: "50%", background: `${C.amber}15`, 
+          display: "flex", alignItems: "center", justifyContent: "center",
+          border: `1px solid ${C.amber}30`
+        }}>
+          <Lock size={32} color={C.amber} />
+        </div>
+        <div>
+          <h2 style={{ color: C.text, fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Dashboard Locked</h2>
+          <p style={{ color: C.muted, fontSize: 14, maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
+            To unlock personalized insights, trend analysis, and AI-driven study strategies, you must validate at least one prediction round.
+          </p>
+        </div>
+        
+        {pendingRounds.length > 0 ? (
+          <div style={{ 
+            background: C.card, padding: "16px 24px", borderRadius: 16, border: `1px solid ${C.border}`,
+            display: "flex", alignItems: "center", gap: 16, marginTop: 10
+          }}>
+            <div style={{ textAlign: "left" }}>
+              <div style={{ color: C.text, fontSize: 14, fontWeight: 700 }}>{pendingRounds.length} Pending Validations</div>
+              <div style={{ color: C.muted, fontSize: 11 }}>Upload actual papers to see how AI performed</div>
+            </div>
+            <div style={{ width: 1, height: 30, background: C.border }} />
+            <div style={{ color: C.amber, fontSize: 12, fontWeight: 800, letterSpacing: "0.05em" }}>ACTION REQUIRED</div>
+          </div>
+        ) : (
+          <div style={{ color: C.muted, fontSize: 12, fontStyle: "italic" }}>
+            Start your first prediction round to begin!
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 20, width: "100%", maxWidth: 500 }}>
+          {[
+            { icon: <TrendingUp size={16} />, label: "Trend Analysis" },
+            { icon: <Cpu size={16} />, label: "AI Strategy" },
+            { icon: <BarChart3 size={16} />, label: "Accuracy Tracking" }
+          ].map((feat, i) => (
+            <div key={i} style={{ padding: 12, background: C.dim, borderRadius: 12, textAlign: "center", opacity: 0.6 }}>
+              <div style={{ color: C.muted, marginBottom: 4, display: "flex", justifyContent: "center" }}>{feat.icon}</div>
+              <div style={{ color: C.muted, fontSize: 10, fontWeight: 600 }}>{feat.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const avgAccuracy = Math.round(validatedRounds.reduce((acc, r) => acc + r.validation.overallAccuracy, 0) / validatedRounds.length);
+  
+  const missedTopics = validatedRounds.flatMap(r => r.validation.missed || []);
+  const missedBySubject = missedTopics.reduce((acc: any, t: any) => {
+    acc[t.subject] = (acc[t.subject] || 0) + 1;
+    return acc;
+  }, {});
+  
+  const topWeakAreas = Object.entries(missedBySubject)
+    .sort(([, a]: any, [, b]: any) => b - a)
+    .slice(0, 3);
+
+  const generateStrategy = async () => {
+    setLoading(true);
+    try {
+      const historySummary = validatedRounds.map(r => ({
+        year: r.sourceYear + 1,
+        accuracy: r.validation.overallAccuracy,
+        missed: r.validation.missed.map((m: any) => m.topic),
+        surprises: r.validation.surprises.map((s: any) => s.topic)
+      }));
+
+      const prompt = `Based on my BPSC PT prediction history, generate a personalized study strategy.
+      HISTORY: ${JSON.stringify(historySummary)}
+      
+      Provide a concise 3-4 point strategy focusing on weak areas, recurring missed topics, and how to better align with BPSC trends. 
+      Format as a simple list.`;
+
+      const res = await getGeminiTextResponse(prompt);
+      setStrategy(res);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ color: accent, fontSize: 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{avgAccuracy}%</div>
+          <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>Avg. Prediction Accuracy</div>
+        </div>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ color: C.red, fontSize: 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{missedTopics.length}</div>
+          <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>Total Missed Topics</div>
+        </div>
+      </div>
+
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+        <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <TrendingUp size={14} color={C.red} /> Weak Areas (Missed Most)
+        </h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {topWeakAreas.map(([subject, count]: any) => (
+            <div key={subject} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ color: C.text, fontSize: 12 }}>{subject}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, marginLeft: 16 }}>
+                <div style={{ height: 6, background: C.dim, borderRadius: 3, flex: 1, overflow: "hidden" }}>
+                  <div style={{ height: "100%", background: C.red, width: `${(count / missedTopics.length) * 100}%` }} />
+                </div>
+                <span style={{ color: C.muted, fontSize: 11, width: 20 }}>{count}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ background: `${accent}08`, border: `1px solid ${accent}25`, borderRadius: 12, padding: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+            <Zap size={14} color={accent} /> AI Personal Strategy
+          </h3>
+          {!strategy && !loading && (
+            <button 
+              onClick={generateStrategy}
+              style={{ 
+                background: accent, color: "#000", border: "none", borderRadius: 6, 
+                padding: "4px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer" 
+              }}
+            >
+              Generate
+            </button>
+          )}
+        </div>
+
+        {loading && <p style={{ color: C.muted, fontSize: 12 }}>Analyzing your history...</p>}
+        
+        {strategy && (
+          <div style={{ color: C.text, fontSize: 12, lineHeight: 1.6 }}>
+            <div className="markdown-body">
+              <Markdown>{strategy}</Markdown>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── MAIN APP ───────────────────────────────────────────────────────────── */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 function BPSCPredictor() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription">("predictor");
+  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard">("predictor");
   const [rounds, setRounds] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [phase, setPhase] = useState("START");
   // model state
   const [model, setModel] = useState("gemini");
   // files & year
-  const [sourceYear, setSourceYear] = useState(2022);
+  const [sourceYear, setSourceYear] = useState(2024);
+  const [priorities, setPriorities] = useState<string[]>([]);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [validateFile, setValidateFile] = useState<File | null>(null);
   // ui state
@@ -968,8 +1395,8 @@ function BPSCPredictor() {
     setLoading(true); setError(null);
     try {
       const fd = await readFile(sourceFile);
-      const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx));
-      const newRound = { sourceYear, predictions: result, validation: null, model, createdAt: Date.now() };
+      const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx, priorities));
+      const newRound = { sourceYear, predictions: result, validation: null, model, createdAt: Date.now(), priorities };
       const updated = [...rounds, newRound];
       setRounds(updated);
       setActiveIdx(updated.length - 1);
@@ -999,12 +1426,14 @@ function BPSCPredictor() {
     const last = rounds[rounds.length - 1];
     setSourceYear(last ? last.sourceYear + 1 : sourceYear);
     setSourceFile(null); setValidateFile(null); setError(null);
+    setPriorities([]);
     setPhase("PREDICT_SETUP");
   };
 
   const resetAll = async () => {
     setRounds([]); setActiveIdx(null); setPhase("START");
     setSourceFile(null); setValidateFile(null); setError(null);
+    setPriorities([]);
     try { await storage.delete("bpsc-v2-rounds"); } catch (e) {}
   };
 
@@ -1012,6 +1441,7 @@ function BPSCPredictor() {
   const avgAccuracy = rounds.filter(r => r.validation).length > 0
     ? Math.round(rounds.filter(r => r.validation).reduce((a, r) => a + r.validation.overallAccuracy, 0) / rounds.filter(r => r.validation).length)
     : null;
+  const pendingRounds = rounds.filter(r => !r.validation);
 
   if (authLoading) {
     return (
@@ -1035,6 +1465,44 @@ function BPSCPredictor() {
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Mulish', sans-serif", color: C.text, maxWidth: 900, margin: "0 auto", padding: "0 16px 80px" }}>
+
+      {/* VALIDATION ALERT BANNER */}
+      {pendingRounds.length > 0 && mainView !== "dashboard" && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{
+            marginTop: 20, background: `linear-gradient(90deg, ${C.amber}15, transparent)`,
+            border: `1px solid ${C.amber}30`, borderRadius: 16, padding: "16px 20px",
+            display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: "50%", background: `${C.amber}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Shield size={18} color={C.amber} />
+            </div>
+            <div>
+              <div style={{ color: C.text, fontSize: 14, fontWeight: 800 }}>{pendingRounds.length} Rounds Awaiting Validation</div>
+              <div style={{ color: C.muted, fontSize: 11 }}>Complete validation to unlock personalized dashboard insights.</div>
+            </div>
+          </div>
+          <button 
+            onClick={() => {
+              const firstPending = rounds.findIndex(r => !r.validation);
+              if (firstPending !== -1) {
+                setActiveIdx(firstPending);
+                setPhase("VALIDATE_SETUP");
+                setMainView("predictor");
+              }
+            }}
+            style={{
+              background: C.amber, color: "#000", border: "none", borderRadius: 10,
+              padding: "8px 16px", fontSize: 11, fontWeight: 800, cursor: "pointer",
+              fontFamily: "'JetBrains Mono', monospace"
+            }}
+          >VALIDATE NOW</button>
+        </motion.div>
+      )}
 
       {/* NOTIFICATIONS */}
       {notifications.length > 0 && (
@@ -1098,6 +1566,16 @@ function BPSCPredictor() {
                     paddingBottom: 2,
                   }}
                 >CA ENGINE 🔥</button>
+                <button
+                  onClick={() => setMainView("dashboard")}
+                  style={{
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    color: mainView === "dashboard" ? C.text : C.muted,
+                    fontSize: 11, fontWeight: mainView === "dashboard" ? 800 : 400,
+                    fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "dashboard" ? `2px solid ${accent}` : "none",
+                    paddingBottom: 2,
+                  }}
+                >DASHBOARD 📊</button>
               </div>
             </div>
           </div>
@@ -1119,6 +1597,10 @@ function BPSCPredictor() {
       {mainView === "ca" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
           <CurrentAffairsEngine accent={accent} />
+        </div>
+      ) : mainView === "dashboard" ? (
+        <div className="animate-fade-up" style={{ marginTop: 20 }}>
+          <PersonalizedDashboard rounds={rounds} accent={accent} />
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: rounds.length > 0 ? "190px 1fr" : "1fr", gap: 20 }}>
@@ -1199,7 +1681,7 @@ function BPSCPredictor() {
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", display: "block", marginBottom: 8 }}>YEAR OF PAPER YOU'RE UPLOADING</label>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {[2019, 2020, 2021, 2022, 2023, 2024].map(y => (
+                    {[2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026].map(y => (
                       <button key={y} onClick={() => setSourceYear(y)} style={{
                         padding: "8px 14px", borderRadius: 8,
                         border: `1px solid ${sourceYear === y ? accent : C.border}`,
@@ -1209,6 +1691,57 @@ function BPSCPredictor() {
                       }}>{y}</button>
                     ))}
                   </div>
+                </div>
+
+                {/* Subject Priorities */}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", display: "block", marginBottom: 8 }}>
+                    SET CUSTOM PRIORITIES (RANKED)
+                  </label>
+                  <p style={{ color: C.muted, fontSize: 11, marginBottom: 12 }}>
+                    Select subjects to prioritize. The AI will give more weight to these in its analysis.
+                  </p>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                    {["Bihar Special", "History", "Science", "Current Affairs", "Geography", "Polity", "Economy", "Environment", "Maths"].map(s => {
+                      const idx = priorities.indexOf(s);
+                      const isSelected = idx !== -1;
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => {
+                            if (isSelected) {
+                              setPriorities(priorities.filter(p => p !== s));
+                            } else {
+                              setPriorities([...priorities, s]);
+                            }
+                          }}
+                          style={{
+                            padding: "6px 12px", borderRadius: 20, fontSize: 12,
+                            border: `1px solid ${isSelected ? accent : C.border}`,
+                            background: isSelected ? `${accent}15` : "transparent",
+                            color: isSelected ? accent : C.muted,
+                            cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+                            transition: "all 0.2s"
+                          }}
+                        >
+                          {isSelected && <span style={{ 
+                            background: accent, color: "#000", width: 16, height: 16, 
+                            borderRadius: "50%", fontSize: 10, display: "grid", placeItems: "center",
+                            fontWeight: 800
+                          }}>{idx + 1}</span>}
+                          {s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {priorities.length > 0 && (
+                    <button 
+                      onClick={() => setPriorities([])}
+                      style={{ background: "none", border: "none", color: C.red, fontSize: 11, cursor: "pointer", padding: 0 }}
+                    >
+                      Clear Priorities
+                    </button>
+                  )}
                 </div>
 
                 <DropZone label={`BPSC PT ${sourceYear} Paper`} sublabel="PDF or TXT · Text files give the best results" onFile={setSourceFile} accent={accent} />
@@ -1232,7 +1765,7 @@ function BPSCPredictor() {
                   fontFamily: "'JetBrains Mono', monospace",
                 }}>{loading ? "Analyzing…" : `⚡ Predict ${sourceYear + 1} Topics`}</button>
               </div>
-              {loading && <Loader label={`${(MODELS as any)[model].label} analyzing ${sourceYear} paper`} accent={accent} />}
+              {loading && <Loader label="Baking for your exam..." accent={accent} />}
             </div>
           )}
 
@@ -1268,7 +1801,13 @@ function BPSCPredictor() {
                     }}>Validate →</button>
                   )}
                 </div>
-                <PredictionView predictions={activeRound.predictions} validation={activeRound.validation} accent={activeAccent} />
+                <PredictionView 
+                  predictions={activeRound.predictions} 
+                  validation={activeRound.validation} 
+                  accent={activeAccent} 
+                  priorities={activeRound.priorities}
+                  rounds={rounds}
+                />
               </div>
 
               {phase === "DONE" && (
@@ -1308,6 +1847,25 @@ function BPSCPredictor() {
                 </div>
 
                 <DropZone label={`BPSC PT ${activeRound.sourceYear + 1} Paper`} sublabel="Actual exam paper to compare predictions against" onFile={setValidateFile} accent={C.green} />
+
+                <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ background: `${C.green}08`, border: `1px solid ${C.green}20`, borderRadius: 12, padding: 12 }}>
+                    <div style={{ color: C.green, fontSize: 12, fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                      <TrendingUp size={14} /> Unlock Dashboard
+                    </div>
+                    <p style={{ color: C.muted, fontSize: 11, margin: 0, lineHeight: 1.5 }}>
+                      See your accuracy trends and identify weak areas across multiple years.
+                    </p>
+                  </div>
+                  <div style={{ background: `${C.gemini}08`, border: `1px solid ${C.gemini}20`, borderRadius: 12, padding: 12 }}>
+                    <div style={{ color: C.gemini, fontSize: 12, fontWeight: 800, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                      <Cpu size={14} /> AI Learning
+                    </div>
+                    <p style={{ color: C.muted, fontSize: 11, margin: 0, lineHeight: 1.5 }}>
+                      AI extracts "Missed Topics" to improve the next year's prediction logic.
+                    </p>
+                  </div>
+                </div>
 
                 {error && <p style={{ color: C.red, fontSize: 12, marginTop: 12 }}>⚠ {error}</p>}
 

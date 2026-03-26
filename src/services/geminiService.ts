@@ -44,3 +44,20 @@ export const getGeminiResponse = async (fileData: { type: string, data: string, 
     throw new Error("Invalid JSON response from AI. Please try again.");
   }
 };
+
+export const getGeminiTextResponse = async (promptText: string) => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("Gemini API key is not configured.");
+  const ai = new GoogleGenAI({ apiKey: key });
+  
+  const response: GenerateContentResponse = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [{ parts: [{ text: promptText }] }],
+    config: {
+      temperature: 0.7,
+      maxOutputTokens: 2000,
+    },
+  });
+
+  return response.text || "No response from AI.";
+};
