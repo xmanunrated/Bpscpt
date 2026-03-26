@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { getGeminiResponse, getGeminiTextResponse } from "./services/geminiService";
 import { auth, signInWithGoogle, logout, onAuthStateChanged, db, User } from "./firebase";
 import { doc, onSnapshot, collection, query, where, getDocs, setDoc, addDoc, deleteDoc, updateDoc, limit, orderBy, Timestamp, getDocFromServer } from "firebase/firestore";
-import { LogOut, User as UserIcon, Shield, CreditCard, TrendingUp, BookOpen, Zap, CheckCircle2, ArrowRight, Layout, Globe, Cpu, DollarSign, Bell, BarChart3, Download, Plus, Trash2, Save, Edit3, X, Search, Filter, Lock } from "lucide-react";
+import { LogOut, User as UserIcon, Shield, CreditCard, TrendingUp, BookOpen, Zap, CheckCircle2, ArrowRight, Layout, Globe, Cpu, DollarSign, Bell, BarChart3, Download, Plus, Trash2, Save, Edit3, X, Search, Filter, Lock, Bookmark, Share2, Star } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 
@@ -284,6 +284,12 @@ function currentAffairsPrompt(mode: CAMode, subject: CASubject = "All") {
   3. **National/Intl**: Focus on Awards, Sports, Summits, and Indices.
   4. **Question Style**: Factual, often with 'None of the above/More than one of the above' as an option (Option E style).
 
+  EXPLANATION GUIDELINES:
+  - Be extremely concise and directly related to the BPSC exam context.
+  - Clearly highlight why the correct answer is right.
+  - Briefly explain why other options are wrong or less relevant in the BPSC scenario.
+  - Use bullet points if necessary for clarity.
+
   Return ONLY valid JSON:
   {
     "mode": "${mode}",
@@ -295,7 +301,7 @@ function currentAffairsPrompt(mode: CAMode, subject: CASubject = "All") {
         "question": "Question text?",
         "options": ["A", "B", "C", "D", "E"],
         "correctOption": 0,
-        "explanation": "Detailed explanation with context.",
+        "explanation": "Concise BPSC-focused explanation. Correct because... Others are wrong because...",
         "category": "${subject === "All" ? "Bihar Special" : subject}",
         "importance": 5
       }
@@ -458,6 +464,7 @@ function DropZone({ label, sublabel, onFile, accent }: { label: string, sublabel
 
 /* ─── MODEL SELECTOR ─────────────────────────────────────────────────────── */
 function ModelSelector({ selected, onSelect, configs, isPremium }: any) {
+  const isMobile = useIsMobile();
   // Merge static MODELS with dynamic configs
   const mergedModels = Object.values(MODELS).map(m => {
     const config = configs.find((c: any) => c.id === m.id);
@@ -472,7 +479,7 @@ function ModelSelector({ selected, onSelect, configs, isPremium }: any) {
       <p style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.08em", marginBottom: 12 }}>
         SELECT AI MODEL
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 }}>
         {mergedModels.map(m => {
           const locked = m.isPremiumOnly && !isPremium;
           return (
@@ -565,7 +572,8 @@ function CuratedCAView({ ca, accent }: { ca: any, accent: string }) {
 }
 
 /* ─── CURRENT AFFAIRS ENGINE ──────────────────────────────────────────────── */
-function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, user: User | null, isUserAdmin: boolean }) {
+function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: string, user: User | null, isUserAdmin: boolean, profile: any }) {
+  const isMobile = useIsMobile();
   const [mode, setMode] = useState<CAMode>("daily");
   const [subject, setSubject] = useState<CASubject>("All");
   const [loading, setLoading] = useState(false);
@@ -574,7 +582,8 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
   const [showExplanations, setShowExplanations] = useState<Record<string, boolean>>({});
   const [curatedList, setCuratedList] = useState<any[]>([]);
   const [activeCurated, setActiveCurated] = useState<any | null>(null);
-  const [viewMode, setViewMode] = useState<"quiz" | "curated">("quiz");
+  const [viewMode, setViewMode] = useState<"quiz" | "curated" | "bookmarks">("quiz");
+  const [importanceFilter, setImportanceFilter] = useState<number>(0);
 
   useEffect(() => {
     const q = query(collection(db, "current_affairs"), orderBy("date", "desc"), limit(10));
@@ -608,6 +617,49 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
     setShowExplanations(prev => ({ ...prev, [qId]: true }));
   };
 
+  const handleBookmark = async (q: CAQuestion) => {
+    if (!user) return alert("Please login to bookmark questions.");
+    const bookmarks = profile?.bookmarkedQuestions || [];
+    const isBookmarked = bookmarks.some((b: any) => typeof b === 'string' ? b === q.id : b.id === q.id);
+    
+    let newBookmarks;
+    if (isBookmarked) {
+      newBookmarks = bookmarks.filter((b: any) => (typeof b === 'string' ? b !== q.id : b.id !== q.id));
+    } else {
+      newBookmarks = [...bookmarks, q];
+    }
+
+    try {
+      await updateDoc(doc(db, "users", user.uid), { bookmarkedQuestions: newBookmarks });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`);
+    }
+  };
+
+  const handleShare = async (q: CAQuestion) => {
+    const text = `BPSC Current Affairs Question:\n\n${q.question}\n\nOptions:\n${q.options.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join("\n")}\n\nExplanation: ${q.explanation}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "BPSC Current Affairs",
+          text: text,
+          url: window.location.href,
+        });
+      } catch (e) {
+        console.error("Error sharing:", e);
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(text);
+        alert("Question copied to clipboard!");
+      } catch (e) {
+        alert("Failed to copy to clipboard.");
+      }
+    }
+  };
+
+  const filteredQuestions = data?.questions.filter(q => q.importance >= importanceFilter) || [];
+
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, marginBottom: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -638,6 +690,17 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
           >
             CURATED
           </button>
+          <button 
+            onClick={() => setViewMode("bookmarks")}
+            style={{ 
+              background: viewMode === "bookmarks" ? accent : C.surface, 
+              color: viewMode === "bookmarks" ? "#000" : C.muted,
+              border: `1px solid ${viewMode === "bookmarks" ? accent : C.border}`,
+              borderRadius: 6, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer"
+            }}
+          >
+            BOOKMARKS
+          </button>
         </div>
       </div>
 
@@ -647,19 +710,20 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
           {/* Mode Selector */}
           <div style={{ marginBottom: 16 }}>
             <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Timeframe Mode</p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: isMobile ? "nowrap" : "wrap", overflowX: isMobile ? "auto" : "visible", paddingBottom: isMobile ? 8 : 0 }}>
               {(["daily", "weekly", "monthly", "yearly", "trend"] as CAMode[]).map(m => (
                 <button
                   key={m}
                   onClick={() => generateCA(m, subject)}
                   disabled={loading}
                   style={{
-                    padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                    padding: isMobile ? "6px 12px" : "8px 16px", borderRadius: 8, fontSize: isMobile ? 11 : 12, fontWeight: 600,
                     background: mode === m ? accent : C.surface,
                     color: mode === m ? "#000" : C.text,
                     border: `1px solid ${mode === m ? accent : C.border}`,
                     cursor: "pointer", textTransform: "capitalize",
                     transition: "all 0.2s", opacity: loading && mode !== m ? 0.5 : 1,
+                    whiteSpace: "nowrap"
                   }}
                 >
                   {m} {m === "trend" && "🔥"}
@@ -689,6 +753,24 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
                   {s}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Filters Area */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 24, alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Filter size={14} color={C.muted} />
+              <span style={{ fontSize: 11, color: C.muted, fontWeight: 700 }}>IMPORTANCE:</span>
+              <select 
+                value={importanceFilter}
+                onChange={(e) => setImportanceFilter(parseInt(e.target.value))}
+                style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: "4px 8px", fontSize: 11 }}
+              >
+                <option value={0}>All</option>
+                <option value={3}>3+ Stars</option>
+                <option value={4}>4+ Stars</option>
+                <option value={5}>5 Stars Only</option>
+              </select>
             </div>
           </div>
 
@@ -724,73 +806,92 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                {data.questions.map((q, idx) => (
-                  <div key={q.id} style={{
-                    background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20,
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                      <Chip color={q.category === "Bihar Special" ? C.amber : C.gemini}>{q.category}</Chip>
-                      <div style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-                        IMPORTANCE: {Array(q.importance).fill("★").join("")}
-                      </div>
-                    </div>
-                    <h3 style={{ color: C.text, fontSize: 15, fontWeight: 600, lineHeight: 1.5, marginBottom: 16 }}>
-                      {idx + 1}. {q.question}
-                    </h3>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {q.options.map((opt, optIdx) => {
-                        const isSelected = selectedAnswers[q.id] === optIdx;
-                        const isCorrect = optIdx === q.correctOption;
-                        const showResult = selectedAnswers[q.id] !== undefined;
-
-                        let bg = C.card;
-                        let border = C.border;
-                        let color = C.text;
-
-                        if (showResult) {
-                          if (isCorrect) {
-                            bg = `${C.green}15`;
-                            border = C.green;
-                            color = C.green;
-                          } else if (isSelected) {
-                            bg = `${C.red}15`;
-                            border = C.red;
-                            color = C.red;
-                          }
-                        }
-
-                        return (
-                          <button
-                            key={optIdx}
-                            onClick={() => handleOptionClick(q.id, optIdx)}
-                            style={{
-                              textAlign: "left", padding: "12px 16px", borderRadius: 8,
-                              background: bg, border: `1px solid ${border}`, color,
-                              fontSize: 13, cursor: showResult ? "default" : "pointer",
-                              transition: "all 0.2s",
-                            }}
+                {filteredQuestions.map((q, idx) => {
+                  const isBookmarked = profile?.bookmarkedQuestions?.some((b: any) => typeof b === 'string' ? b === q.id : b.id === q.id);
+                  return (
+                    <div key={q.id} style={{
+                      background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20,
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <Chip color={q.category === "Bihar Special" ? C.amber : C.gemini}>{q.category}</Chip>
+                          <div style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                            {Array(q.importance).fill("★").join("")}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button 
+                            onClick={() => handleShare(q)}
+                            style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 4 }}
                           >
-                            <span style={{ marginRight: 10, opacity: 0.5, fontWeight: 700 }}>
-                              {String.fromCharCode(65 + optIdx)}.
-                            </span>
-                            {opt}
+                            <Share2 size={16} />
                           </button>
-                        );
-                      })}
-                    </div>
-                    {showExplanations[q.id] && (
-                      <div style={{
-                        marginTop: 16, padding: "12px 16px", background: C.dim,
-                        borderRadius: 8, borderLeft: `3px solid ${accent}`,
-                        animation: "slideDown 0.3s ease-out",
-                      }}>
-                        <p style={{ color: C.text, fontSize: 12, lineHeight: 1.6, margin: 0 }}>
-                          <strong>Explanation:</strong> {q.explanation}
-                        </p>
+                          <button 
+                            onClick={() => handleBookmark(q)}
+                            style={{ background: "none", border: "none", color: isBookmarked ? accent : C.muted, cursor: "pointer", padding: 4 }}
+                          >
+                            <Bookmark size={16} fill={isBookmarked ? accent : "none"} />
+                          </button>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <h3 style={{ color: C.text, fontSize: 15, fontWeight: 600, lineHeight: 1.5, marginBottom: 16 }}>
+                        {idx + 1}. {q.question}
+                      </h3>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {q.options.map((opt, optIdx) => {
+                          const isSelected = selectedAnswers[q.id] === optIdx;
+                          const isCorrect = optIdx === q.correctOption;
+                          const showResult = selectedAnswers[q.id] !== undefined;
+
+                          let bg = C.card;
+                          let border = C.border;
+                          let color = C.text;
+
+                          if (showResult) {
+                            if (isCorrect) {
+                              bg = `${C.green}15`;
+                              border = C.green;
+                              color = C.green;
+                            } else if (isSelected) {
+                              bg = `${C.red}15`;
+                              border = C.red;
+                              color = C.red;
+                            }
+                          }
+
+                          return (
+                            <button
+                              key={optIdx}
+                              onClick={() => handleOptionClick(q.id, optIdx)}
+                              style={{
+                                textAlign: "left", padding: "12px 16px", borderRadius: 8,
+                                background: bg, border: `1px solid ${border}`, color,
+                                fontSize: 13, cursor: showResult ? "default" : "pointer",
+                                transition: "all 0.2s",
+                              }}
+                            >
+                              <span style={{ marginRight: 10, opacity: 0.5, fontWeight: 700 }}>
+                                {String.fromCharCode(65 + optIdx)}.
+                              </span>
+                              {opt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {showExplanations[q.id] && (
+                        <div style={{
+                          marginTop: 16, padding: "12px 16px", background: C.dim,
+                          borderRadius: 8, borderLeft: `3px solid ${accent}`,
+                          animation: "slideDown 0.3s ease-out",
+                        }}>
+                          <p style={{ color: C.text, fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+                            <strong>Explanation:</strong> {q.explanation}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -801,23 +902,30 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
             </div>
           )}
         </>
-      ) : (
+      ) : viewMode === "curated" ? (
         <div style={{ animation: "fadeIn 0.5s ease-out" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 }}>Curated Summaries</p>
-            {isUserAdmin && (
+            <div style={{ display: "flex", gap: 8 }}>
               <button 
                 onClick={async () => {
                   setLoading(true);
                   try {
                     const today = new Date().toISOString().split('T')[0];
-                    const prompt = curatedCAPrompt(today);
-                    const res = await getGeminiResponse(null, prompt);
-                    await setDoc(doc(db, "current_affairs", today), res);
-                    alert("Today's Curated CA generated successfully!");
+                    const existing = curatedList.find(c => c.date === today);
+                    if (existing) {
+                      setActiveCurated(existing);
+                    } else {
+                      const prompt = curatedCAPrompt(today);
+                      const res = await getGeminiResponse(null, prompt);
+                      if (isUserAdmin) {
+                        await setDoc(doc(db, "current_affairs", today), res);
+                      }
+                      setActiveCurated(res);
+                    }
                   } catch (error) {
                     console.error(error);
-                    alert("Failed to generate curated CA.");
+                    alert("Failed to fetch latest news summary.");
                   } finally {
                     setLoading(false);
                   }
@@ -828,9 +936,35 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
                   borderRadius: 6, padding: "4px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer"
                 }}
               >
-                {loading ? "GENERATING..." : "GENERATE TODAY'S CA"}
+                {loading ? "FETCHING..." : "FETCH LATEST NEWS"}
               </button>
-            )}
+              {isUserAdmin && (
+                <button 
+                  onClick={async () => {
+                    setLoading(true);
+                    try {
+                      const today = new Date().toISOString().split('T')[0];
+                      const prompt = curatedCAPrompt(today);
+                      const res = await getGeminiResponse(null, prompt);
+                      await setDoc(doc(db, "current_affairs", today), res);
+                      alert("Today's Curated CA generated successfully!");
+                    } catch (error) {
+                      console.error(error);
+                      alert("Failed to generate curated CA.");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  disabled={loading}
+                  style={{ 
+                    background: accent, color: "#000", border: "none", 
+                    borderRadius: 6, padding: "4px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer"
+                  }}
+                >
+                  {loading ? "GENERATING..." : "GENERATE TODAY'S CA"}
+                </button>
+              )}
+            </div>
           </div>
 
           {activeCurated ? (
@@ -882,6 +1016,78 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin }: { accent: string, u
             </div>
           )}
         </div>
+      ) : (
+        <div style={{ animation: "fadeIn 0.5s ease-out" }}>
+          <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Your Bookmarked Questions</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {profile?.bookmarkedQuestions?.length > 0 ? profile.bookmarkedQuestions.map((q: any, idx: number) => {
+              const question = typeof q === 'string' ? null : q;
+              if (!question) return null;
+              return (
+                <div key={question.id} style={{
+                  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <Chip color={question.category === "Bihar Special" ? C.amber : C.gemini}>{question.category}</Chip>
+                      <div style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {Array(question.importance).fill("★").join("")}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button 
+                        onClick={() => handleShare(question)}
+                        style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 4 }}
+                      >
+                        <Share2 size={16} />
+                      </button>
+                      <button 
+                        onClick={() => handleBookmark(question)}
+                        style={{ background: "none", border: "none", color: accent, cursor: "pointer", padding: 4 }}
+                      >
+                        <Bookmark size={16} fill={accent} />
+                      </button>
+                    </div>
+                  </div>
+                  <h3 style={{ color: C.text, fontSize: 15, fontWeight: 600, lineHeight: 1.5, marginBottom: 16 }}>
+                    {idx + 1}. {question.question}
+                  </h3>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {question.options.map((opt: string, optIdx: number) => (
+                      <div
+                        key={optIdx}
+                        style={{
+                          textAlign: "left", padding: "12px 16px", borderRadius: 8,
+                          background: optIdx === question.correctOption ? `${C.green}15` : C.card, 
+                          border: `1px solid ${optIdx === question.correctOption ? C.green : C.border}`, 
+                          color: optIdx === question.correctOption ? C.green : C.text,
+                          fontSize: 13,
+                        }}
+                      >
+                        <span style={{ marginRight: 10, opacity: 0.5, fontWeight: 700 }}>
+                          {String.fromCharCode(65 + optIdx)}.
+                        </span>
+                        {opt}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{
+                    marginTop: 16, padding: "12px 16px", background: C.dim,
+                    borderRadius: 8, borderLeft: `3px solid ${accent}`,
+                  }}>
+                    <p style={{ color: C.text, fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+                      <strong>Explanation:</strong> {question.explanation}
+                    </p>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div style={{ textAlign: "center", padding: "40px 20px", border: `1px dashed ${C.border}`, borderRadius: 12 }}>
+                <p style={{ color: C.muted, fontSize: 13 }}>No bookmarked questions yet.</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -920,6 +1126,7 @@ function Sparkline({ data, color }: { data: number[], color: string }) {
 
 /* ─── PREDICTION VIEW ────────────────────────────────────────────────────── */
 function PredictionView({ predictions, validation, accent, priorities, rounds = [] }: any) {
+  const isMobile = useIsMobile();
   const [filter, setFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState("All");
@@ -966,7 +1173,7 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
   return (
     <div>
       {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
         {[
           { label: "Confidence", value: `${predictions.confidence}%`, color: accent },
           { label: "Topics", value: predictions.totalTopicsFound, color: C.text },
@@ -980,7 +1187,7 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
             background: C.surface, border: `1px solid ${C.border}`,
             borderRadius: 10, padding: "12px 10px", textAlign: "center",
           }}>
-            <div style={{ color: s.color, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 20 }}>{s.value}</div>
+            <div style={{ color: s.color, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: isMobile ? 18 : 20 }}>{s.value}</div>
             <div style={{ color: C.muted, fontSize: 10, marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
@@ -1019,7 +1226,7 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
       {/* Validation results */}
       {validation && (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
             <div style={{ background: `${C.green}08`, border: `1px solid ${C.green}25`, borderRadius: 10, padding: 12 }}>
               <div style={{ color: C.green, fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>✓ {validation.confirmedCount}</div>
               <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>Confirmed</div>
@@ -1067,8 +1274,8 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
       )}
 
       {/* Advanced Filters */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: isMobile ? 12 : 14, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12, flexDirection: isMobile ? "column" : "row" }}>
           <div style={{ flex: 1, position: "relative" }}>
             <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.muted }} />
             <input 
@@ -1078,29 +1285,29 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
                 width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: "8px 12px 8px 32px", fontSize: 12, color: C.text, outline: "none"
+                padding: isMobile ? "10px 12px 10px 32px" : "8px 12px 8px 32px", fontSize: 12, color: C.text, outline: "none"
               }}
             />
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", gap: isMobile ? 12 : 8, flexWrap: "wrap", justifyContent: isMobile ? "space-between" : "flex-start" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flex: isMobile ? 1 : "none" }}>
             <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Difficulty:</span>
             <select 
               value={difficultyFilter} 
               onChange={(e) => setDifficultyFilter(e.target.value)}
-              style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, borderRadius: 6, padding: "2px 6px" }}
+              style={{ flex: isMobile ? 1 : "none", background: C.bg, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, borderRadius: 6, padding: "4px 6px" }}
             >
               {difficulties.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
           {validation && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flex: isMobile ? 1 : "none" }}>
               <span style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Match:</span>
               <select 
                 value={matchFilter} 
                 onChange={(e) => setMatchFilter(e.target.value)}
-                style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, borderRadius: 6, padding: "2px 6px" }}
+                style={{ flex: isMobile ? 1 : "none", background: C.bg, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, borderRadius: 6, padding: "4px 6px" }}
               >
                 {matchStrengths.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
@@ -1131,13 +1338,15 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
         return (
           <div key={topic.id} style={{
             background: C.card, border: `1px solid ${C.border}`,
-            borderLeft: `3px solid ${sc}`, borderRadius: 10,
-            padding: "12px 14px", marginBottom: 8,
+            borderLeft: `3px solid ${sc}`, borderRadius: 12,
+            padding: isMobile ? "12px" : "12px 14px", marginBottom: 10,
             animation: `fadeUp 0.3s ease ${i * 0.04}s both`,
+            position: "relative"
           }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* Header: Chips and Probability */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                   <Chip color={sc}>{status === "hit" ? "✓ HIT" : status === "miss" ? "✗ MISS" : `${topic.probability}%`}</Chip>
                   <Chip color={accent}>{topic.subject}</Chip>
                   {topic.difficulty && (
@@ -1147,92 +1356,91 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
                   )}
                   <Chip color={C.muted}>{topic.questionType}</Chip>
                   <Sparkline data={getTrend(topic.id)} color={accent} />
-                  
-                  <button 
-                    onClick={() => setExpandedReasoning(expandedReasoning === topic.id ? null : topic.id)}
-                    style={{
-                      background: "none", border: "none", color: accent, fontSize: 10, 
-                      cursor: "pointer", padding: "2px 6px", borderRadius: 4,
-                      display: "flex", alignItems: "center", gap: 4,
-                      marginLeft: "auto", fontWeight: 600
-                    }}
-                  >
-                    <Zap size={10} /> Why?
-                  </button>
                 </div>
-                <p style={{ color: C.text, fontWeight: 700, fontSize: 14, margin: "0 0 4px" }}>{topic.topic}</p>
                 
-                {expandedReasoning === topic.id && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    style={{ 
-                      background: `${accent}08`, border: `1px solid ${accent}25`, 
-                      borderRadius: 8, padding: "10px 12px", marginBottom: 10,
-                      fontSize: 11, color: C.text, lineHeight: 1.5
-                    }}
-                  >
-                    <strong style={{ color: accent, display: "block", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Prediction Rationale</strong>
-                    {topic.reasoning}
-                  </motion.div>
-                )}
-                
-                {topic.subTopics?.length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
-                    {topic.subTopics.map((st: string, idx: number) => (
-                      <span key={idx} style={{ fontSize: 9, background: C.dim, color: C.muted, padding: "1px 6px", borderRadius: 4 }}>
-                        {st}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <button 
+                  onClick={() => setExpandedReasoning(expandedReasoning === topic.id ? null : topic.id)}
+                  style={{
+                    background: "none", border: "none", color: accent, fontSize: 10, 
+                    cursor: "pointer", padding: "2px 6px", borderRadius: 4,
+                    display: "flex", alignItems: "center", gap: 4,
+                    fontWeight: 600
+                  }}
+                >
+                  <Zap size={10} /> {isMobile ? "Why?" : "Prediction Rationale"}
+                </button>
+              </div>
 
-                <p style={{ color: C.muted, fontSize: 11, margin: "0 0 4px", fontFamily: "'JetBrains Mono', monospace" }}>
+              {/* Topic Title */}
+              <p style={{ color: C.text, fontWeight: 700, fontSize: isMobile ? 13 : 14, margin: 0, lineHeight: 1.4 }}>{topic.topic}</p>
+              
+              {/* Reasoning (Expanded) */}
+              {expandedReasoning === topic.id && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  style={{ 
+                    background: `${accent}08`, border: `1px solid ${accent}25`, 
+                    borderRadius: 8, padding: "10px 12px",
+                    fontSize: 11, color: C.text, lineHeight: 1.5
+                  }}
+                >
+                  <strong style={{ color: accent, display: "block", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Prediction Rationale</strong>
+                  {topic.reasoning}
+                </motion.div>
+              )}
+              
+              {/* Sub-topics */}
+              {topic.subTopics?.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {topic.subTopics.map((st: string, idx: number) => (
+                    <span key={idx} style={{ fontSize: 9, background: C.dim, color: C.muted, padding: "1px 6px", borderRadius: 4 }}>
+                      {st}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Additional Context */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <p style={{ color: C.muted, fontSize: 10, margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>
                   Pattern: {topic.likelyPattern}
                 </p>
 
                 {topic.historicalContext && (
-                  <div style={{ display: "flex", gap: 4, alignItems: "flex-start", marginBottom: 4 }}>
+                  <div style={{ display: "flex", gap: 4, alignItems: "flex-start" }}>
                     <span style={{ fontSize: 10 }}>📜</span>
                     <p style={{ color: C.muted, fontSize: 10, fontStyle: "italic", margin: 0 }}>
                       {topic.historicalContext}
                     </p>
                   </div>
                 )}
-                {match && (
-                  <div style={{ marginTop: 8, background: `${C.green}08`, border: `1px solid ${C.green}25`, borderRadius: 6, padding: "6px 10px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <p style={{ color: C.green, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", margin: 0, textTransform: "uppercase" }}>
-                        Actual Match
-                      </p>
-                      {match.matchStrength && (
-                        <span style={{ 
-                          fontSize: 9, background: match.matchStrength === 'exact' ? C.green : match.matchStrength === 'partial' ? C.amber : C.muted,
-                          color: "#000", padding: "1px 6px", borderRadius: 4, fontWeight: 700, textTransform: "uppercase"
-                        }}>
-                          {match.matchStrength}
-                        </span>
-                      )}
-                    </div>
-                    <p style={{ color: C.green, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 4px" }}>
-                      {match.actualQuestion}
+              </div>
+
+              {/* Actual Match Section */}
+              {match && (
+                <div style={{ marginTop: 4, background: `${C.green}08`, border: `1px solid ${C.green}25`, borderRadius: 8, padding: "8px 12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <p style={{ color: C.green, fontSize: 9, fontFamily: "'JetBrains Mono', monospace", margin: 0, textTransform: "uppercase", fontWeight: 700 }}>
+                      Actual Match
                     </p>
-                    {match.reasoning && (
-                      <p style={{ color: C.muted, fontSize: 10, margin: 0, fontStyle: "italic" }}>
-                        {match.reasoning}
-                      </p>
+                    {match.matchStrength && (
+                      <span style={{ 
+                        fontSize: 9, background: match.matchStrength === 'exact' ? C.green : match.matchStrength === 'partial' ? C.amber : C.muted,
+                        color: "#000", padding: "1px 6px", borderRadius: 4, fontWeight: 700, textTransform: "uppercase"
+                      }}>
+                        {match.matchStrength}
+                      </span>
                     )}
                   </div>
-                )}
-              </div>
-              {!validation && (
-                <div style={{
-                  minWidth: 40, height: 40, borderRadius: 8,
-                  background: `${accent}12`, display: "flex", alignItems: "center",
-                  justifyContent: "center", flexDirection: "column",
-                }}>
-                  <span style={{ color: accent, fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>{topic.probability}</span>
-                  <span style={{ color: C.muted, fontSize: 8 }}>%</span>
+                  <p style={{ color: C.green, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 6px", lineHeight: 1.4 }}>
+                    {match.actualQuestion}
+                  </p>
+                  {match.reasoning && (
+                    <p style={{ color: C.muted, fontSize: 10, margin: 0, fontStyle: "italic", lineHeight: 1.4 }}>
+                      {match.reasoning}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -1245,6 +1453,7 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
 
 /* ─── ROUND CARD ─────────────────────────────────────────────────────────── */
 function RoundCard({ round, index, active, onClick }: any) {
+  const isMobile = useIsMobile();
   const done = !!round.validation;
   const m = (MODELS as any)[round.model] || MODELS.gemini;
   return (
@@ -1252,30 +1461,30 @@ function RoundCard({ round, index, active, onClick }: any) {
       background: active ? C.card : C.surface,
       border: `1px solid ${active ? C.borderBright : C.border}`,
       borderLeft: `3px solid ${done ? C.green : active ? m.accent : C.dim}`,
-      borderRadius: 10, padding: "12px 14px", cursor: "pointer",
+      borderRadius: 10, padding: isMobile ? "10px 12px" : "12px 14px", cursor: "pointer",
       transition: "all 0.2s", animation: `fadeUp 0.3s ease ${index * 0.07}s both`,
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
-            <Chip color={done ? C.green : active ? m.accent : C.muted}>Round {index + 1}</Chip>
-            <Chip color={m.accent}>{m.icon} {m.label.split(" ")[0]}</Chip>
+          <div style={{ display: "flex", gap: 4, marginBottom: 4, flexWrap: "wrap" }}>
+            <Chip color={done ? C.green : active ? m.accent : C.muted}>R{index + 1}</Chip>
+            <Chip color={m.accent}>{m.icon} {isMobile ? "" : m.label.split(" ")[0]}</Chip>
             {done ? (
               <Chip color={round.validation.overallAccuracy >= 80 ? C.green : C.amber}>{round.validation.overallAccuracy}%</Chip>
             ) : (
-              <Chip color={C.amber}>Needs Validation</Chip>
+              <Chip color={C.amber}>{isMobile ? "!" : "Needs Validation"}</Chip>
             )}
           </div>
-          <p style={{ color: C.text, fontSize: 13, fontWeight: 600, margin: 0 }}>
+          <p style={{ color: C.text, fontSize: isMobile ? 12 : 13, fontWeight: 600, margin: 0 }}>
             {round.sourceYear} → {round.sourceYear + 1}
           </p>
           {done && (
-            <p style={{ color: C.muted, fontSize: 11, margin: "2px 0 0", fontFamily: "'JetBrains Mono', monospace" }}>
+            <p style={{ color: C.muted, fontSize: 10, margin: "2px 0 0", fontFamily: "'JetBrains Mono', monospace" }}>
               ✓{round.validation.confirmedCount} ✗{round.validation.missedCount}
             </p>
           )}
         </div>
-        <span style={{ color: C.muted }}>›</span>
+        <span style={{ color: C.muted, fontSize: 12 }}>›</span>
       </div>
     </div>
   );
@@ -1283,18 +1492,19 @@ function RoundCard({ round, index, active, onClick }: any) {
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /* ─── PERSONALIZED DASHBOARD ────────────────────────────────────────────── */
-function PersonalizedDashboard({ rounds, accent }: { rounds: any[], accent: string }) {
+function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { rounds: any[], accent: string, profile: any, setMainView: (v: any) => void }) {
   const [strategy, setStrategy] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
   const validatedRounds = rounds.filter(r => r.validation);
   const pendingRounds = rounds.filter(r => !r.validation);
+
+  const isMobile = useIsMobile();
 
   if (validatedRounds.length === 0) {
     return (
       <div style={{ 
         textAlign: "center", 
-        padding: "60px 20px", 
+        padding: isMobile ? "40px 16px" : "60px 20px", 
         background: `linear-gradient(180deg, ${C.surface} 0%, transparent 100%)`,
         border: `1px dashed ${C.border}`, 
         borderRadius: 24,
@@ -1304,29 +1514,29 @@ function PersonalizedDashboard({ rounds, accent }: { rounds: any[], accent: stri
         gap: 20
       }}>
         <div style={{ 
-          width: 80, height: 80, borderRadius: "50%", background: `${C.amber}15`, 
+          width: isMobile ? 64 : 80, height: isMobile ? 64 : 80, borderRadius: "50%", background: `${C.amber}15`, 
           display: "flex", alignItems: "center", justifyContent: "center",
           border: `1px solid ${C.amber}30`
         }}>
-          <Lock size={32} color={C.amber} />
+          <Lock size={isMobile ? 24 : 32} color={C.amber} />
         </div>
         <div>
-          <h2 style={{ color: C.text, fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Dashboard Locked</h2>
-          <p style={{ color: C.muted, fontSize: 14, maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
+          <h2 style={{ color: C.text, fontSize: isMobile ? 18 : 20, fontWeight: 800, marginBottom: 8 }}>Dashboard Locked</h2>
+          <p style={{ color: C.muted, fontSize: isMobile ? 13 : 14, maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
             To unlock personalized insights, trend analysis, and AI-driven study strategies, you must validate at least one prediction round.
           </p>
         </div>
         
         {pendingRounds.length > 0 ? (
           <div style={{ 
-            background: C.card, padding: "16px 24px", borderRadius: 16, border: `1px solid ${C.border}`,
-            display: "flex", alignItems: "center", gap: 16, marginTop: 10
+            background: C.card, padding: isMobile ? "12px 16px" : "16px 24px", borderRadius: 16, border: `1px solid ${C.border}`,
+            display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "flex-start" : "center", gap: isMobile ? 8 : 16, marginTop: 10
           }}>
             <div style={{ textAlign: "left" }}>
               <div style={{ color: C.text, fontSize: 14, fontWeight: 700 }}>{pendingRounds.length} Pending Validations</div>
               <div style={{ color: C.muted, fontSize: 11 }}>Upload actual papers to see how AI performed</div>
             </div>
-            <div style={{ width: 1, height: 30, background: C.border }} />
+            {!isMobile && <div style={{ width: 1, height: 30, background: C.border }} />}
             <div style={{ color: C.amber, fontSize: 12, fontWeight: 800, letterSpacing: "0.05em" }}>ACTION REQUIRED</div>
           </div>
         ) : (
@@ -1335,7 +1545,27 @@ function PersonalizedDashboard({ rounds, accent }: { rounds: any[], accent: stri
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 20, width: "100%", maxWidth: 500 }}>
+        {/* Bookmarks Preview even if locked */}
+        {profile?.bookmarkedQuestions?.length > 0 && (
+          <div style={{ width: "100%", maxWidth: 500, marginTop: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, margin: 0 }}>Bookmarked Questions</h3>
+              <button 
+                onClick={() => setMainView("ca")}
+                style={{ background: "none", border: "none", color: accent, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                View All
+              </button>
+            </div>
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, textAlign: "left" }}>
+              <p style={{ color: C.text, fontSize: 12, margin: 0 }}>
+                You have <strong>{profile.bookmarkedQuestions.length}</strong> questions bookmarked.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginTop: 20, width: "100%", maxWidth: 500 }}>
           {[
             { icon: <TrendingUp size={16} />, label: "Trend Analysis" },
             { icon: <Cpu size={16} />, label: "AI Strategy" },
@@ -1390,33 +1620,67 @@ function PersonalizedDashboard({ rounds, accent }: { rounds: any[], accent: stri
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-          <div style={{ color: accent, fontSize: 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{avgAccuracy}%</div>
+          <div style={{ color: accent, fontSize: isMobile ? 20 : 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{avgAccuracy}%</div>
           <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>Avg. Prediction Accuracy</div>
         </div>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-          <div style={{ color: C.red, fontSize: 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{missedTopics.length}</div>
+          <div style={{ color: C.red, fontSize: isMobile ? 20 : 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{missedTopics.length}</div>
           <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>Total Missed Topics</div>
         </div>
       </div>
 
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-        <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-          <TrendingUp size={14} color={C.red} /> Weak Areas (Missed Most)
-        </h3>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {topWeakAreas.map(([subject, count]: any) => (
-            <div key={subject} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ color: C.text, fontSize: 12 }}>{subject}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, marginLeft: 16 }}>
-                <div style={{ height: 6, background: C.dim, borderRadius: 3, flex: 1, overflow: "hidden" }}>
-                  <div style={{ height: "100%", background: C.red, width: `${(count / missedTopics.length) * 100}%` }} />
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            <TrendingUp size={14} color={C.red} /> Weak Areas (Missed Most)
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {topWeakAreas.map(([subject, count]: any) => (
+              <div key={subject} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: C.text, fontSize: 12 }}>{subject}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, marginLeft: 16 }}>
+                  <div style={{ height: 6, background: C.dim, borderRadius: 3, flex: 1, overflow: "hidden" }}>
+                    <div style={{ height: "100%", background: C.red, width: `${(count / missedTopics.length) * 100}%` }} />
+                  </div>
+                  <span style={{ color: C.muted, fontSize: 11, width: 20 }}>{count}</span>
                 </div>
-                <span style={{ color: C.muted, fontSize: 11, width: 20 }}>{count}</span>
               </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Bookmarks Section */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+              <Bookmark size={14} color={accent} /> Bookmarked Qs
+            </h3>
+            <button 
+              onClick={() => setMainView("ca")}
+              style={{ background: "none", border: "none", color: accent, fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+            >
+              VIEW ALL
+            </button>
+          </div>
+          {profile?.bookmarkedQuestions?.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {profile.bookmarkedQuestions.slice(0, 3).map((q: any, i: number) => {
+                const question = typeof q === 'string' ? q : q.question;
+                return (
+                  <div key={i} style={{ padding: 8, background: C.dim, borderRadius: 8, fontSize: 11, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {question}
+                  </div>
+                );
+              })}
+              {profile.bookmarkedQuestions.length > 3 && (
+                <p style={{ color: C.muted, fontSize: 10, margin: 0 }}>+ {profile.bookmarkedQuestions.length - 3} more questions</p>
+              )}
             </div>
-          ))}
+          ) : (
+            <p style={{ color: C.muted, fontSize: 11, fontStyle: "italic" }}>No bookmarks yet.</p>
+          )}
         </div>
       </div>
 
@@ -1452,9 +1716,20 @@ function PersonalizedDashboard({ rounds, accent }: { rounds: any[], accent: stri
   );
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+  return isMobile;
+}
+
 /* ─── MAIN APP ───────────────────────────────────────────────────────────── */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 function BPSCPredictor() {
+  const isMobile = useIsMobile();
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -1710,7 +1985,15 @@ function BPSCPredictor() {
   const activeAccent = activeRound ? (MODELS as any)[activeRound.model]?.accent || accent : accent;
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Mulish', sans-serif", color: C.text, maxWidth: 900, margin: "0 auto", padding: "0 16px 80px" }}>
+    <div style={{ 
+      minHeight: "100vh", 
+      background: C.bg, 
+      fontFamily: "'Mulish', sans-serif", 
+      color: C.text, 
+      maxWidth: 900, 
+      margin: "0 auto", 
+      padding: isMobile ? "0 12px 100px" : "0 16px 80px" 
+    }}>
 
       {/* VALIDATION ALERT BANNER */}
       {pendingRounds.length > 0 && mainView !== "dashboard" && (
@@ -1776,30 +2059,30 @@ function BPSCPredictor() {
       )}
 
       {/* HEADER */}
-      <div style={{ padding: "26px 0 18px", borderBottom: `1px solid ${C.border}`, marginBottom: 22 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ padding: isMobile ? "16px 0 12px" : "26px 0 18px", borderBottom: `1px solid ${C.border}`, marginBottom: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: isMobile ? "center" : "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12 }}>
             <div style={{
-              width: 42, height: 42, borderRadius: 10, fontSize: 20,
+              width: isMobile ? 36 : 42, height: isMobile ? 36 : 42, borderRadius: 10, fontSize: isMobile ? 16 : 20,
               background: `linear-gradient(135deg, ${C.gemini}, ${C.claude})`,
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>🧠</div>
             <div>
               <h1 style={{
                 fontFamily: "'Playfair Display', serif", fontWeight: 900,
-                fontSize: "clamp(18px,4vw,26px)",
+                fontSize: isMobile ? "18px" : "clamp(18px,4vw,26px)",
                 background: `linear-gradient(90deg, ${C.gemini} 0%, ${C.claude} 50%, #fff 100%)`,
                 WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", lineHeight: 1.1,
               }}>BPSC PT Predictor</h1>
-              <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+              <div style={{ display: "flex", gap: isMobile ? 8 : 12, marginTop: 8, overflowX: isMobile ? "auto" : "visible", paddingBottom: isMobile ? 4 : 0 }}>
                 <button
                   onClick={() => setMainView("predictor")}
                   style={{
                     background: "transparent", border: "none", padding: 0, cursor: "pointer",
                     color: mainView === "predictor" ? C.text : C.muted,
-                    fontSize: 11, fontWeight: mainView === "predictor" ? 800 : 400,
+                    fontSize: isMobile ? 10 : 11, fontWeight: mainView === "predictor" ? 800 : 400,
                     fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "predictor" ? `2px solid ${accent}` : "none",
-                    paddingBottom: 2,
+                    paddingBottom: 2, whiteSpace: "nowrap"
                   }}
                 >PREDICTOR</button>
                 <button
@@ -1807,9 +2090,9 @@ function BPSCPredictor() {
                   style={{
                     background: "transparent", border: "none", padding: 0, cursor: "pointer",
                     color: mainView === "ca" ? C.text : C.muted,
-                    fontSize: 11, fontWeight: mainView === "ca" ? 800 : 400,
+                    fontSize: isMobile ? 10 : 11, fontWeight: mainView === "ca" ? 800 : 400,
                     fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "ca" ? `2px solid ${accent}` : "none",
-                    paddingBottom: 2,
+                    paddingBottom: 2, whiteSpace: "nowrap"
                   }}
                 >CA ENGINE 🔥</button>
                 <button
@@ -1817,24 +2100,24 @@ function BPSCPredictor() {
                   style={{
                     background: "transparent", border: "none", padding: 0, cursor: "pointer",
                     color: mainView === "dashboard" ? C.text : C.muted,
-                    fontSize: 11, fontWeight: mainView === "dashboard" ? 800 : 400,
+                    fontSize: isMobile ? 10 : 11, fontWeight: mainView === "dashboard" ? 800 : 400,
                     fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "dashboard" ? `2px solid ${accent}` : "none",
-                    paddingBottom: 2,
+                    paddingBottom: 2, whiteSpace: "nowrap"
                   }}
                 >DASHBOARD 📊</button>
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: isMobile ? 6 : 10, marginLeft: isMobile ? "auto" : 0 }}>
             {avgAccuracy !== null && (
-              <div style={{ background: C.card, border: `1px solid ${C.green}40`, borderRadius: 10, padding: "8px 14px", textAlign: "center" }}>
-                <div style={{ color: C.green, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 20 }}>{avgAccuracy}%</div>
-                <div style={{ color: C.muted, fontSize: 10 }}>Avg Accuracy</div>
+              <div style={{ background: C.card, border: `1px solid ${C.green}40`, borderRadius: 10, padding: isMobile ? "4px 8px" : "8px 14px", textAlign: "center" }}>
+                <div style={{ color: C.green, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: isMobile ? 14 : 20 }}>{avgAccuracy}%</div>
+                <div style={{ color: C.muted, fontSize: 8 }}>Accuracy</div>
               </div>
             )}
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 14px", textAlign: "center" }}>
-              <div style={{ color: C.amber, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 20 }}>{rounds.length}</div>
-              <div style={{ color: C.muted, fontSize: 10 }}>Rounds</div>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: isMobile ? "4px 8px" : "8px 14px", textAlign: "center" }}>
+              <div style={{ color: C.amber, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: isMobile ? 14 : 20 }}>{rounds.length}</div>
+              <div style={{ color: C.muted, fontSize: 8 }}>Rounds</div>
             </div>
           </div>
         </div>
@@ -1842,28 +2125,31 @@ function BPSCPredictor() {
 
       {mainView === "ca" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
-          <CurrentAffairsEngine accent={accent} user={user} isUserAdmin={isUserAdmin} />
+          <CurrentAffairsEngine accent={accent} user={user} isUserAdmin={isUserAdmin} profile={profile} />
         </div>
       ) : mainView === "dashboard" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
-          <PersonalizedDashboard rounds={rounds} accent={accent} />
+          <PersonalizedDashboard rounds={rounds} accent={accent} profile={profile} setMainView={setMainView} />
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: rounds.length > 0 ? "190px 1fr" : "1fr", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: (rounds.length > 0 && !isMobile) ? "190px 1fr" : "1fr", gap: 20 }}>
 
         {/* SIDEBAR */}
         {rounds.length > 0 && (
-          <div>
+          <div style={{ order: isMobile ? 2 : 1 }}>
             <p style={{ color: C.muted, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.08em", marginBottom: 10 }}>ROUNDS</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "row" : "column", gap: 8, overflowX: isMobile ? "auto" : "visible", paddingBottom: isMobile ? 10 : 0 }}>
               {rounds.map((r, i) => (
-                <RoundCard key={i} round={r} index={i} active={activeIdx === i}
-                  onClick={() => { setActiveIdx(i); setPhase(r.validation ? "DONE" : "PREDICTED"); }} />
+                <div key={i} style={{ minWidth: isMobile ? 140 : "auto" }}>
+                  <RoundCard round={r} index={i} active={activeIdx === i}
+                    onClick={() => { setActiveIdx(i); setPhase(r.validation ? "DONE" : "PREDICTED"); }} />
+                </div>
               ))}
               {phase === "DONE" && (
                 <div onClick={startNewRound} style={{
                   background: C.surface, border: `2px dashed ${C.border}`, borderRadius: 10,
                   padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+                  minWidth: isMobile ? 140 : "auto"
                 }}>
                   <div style={{ width: 26, height: 26, borderRadius: "50%", border: `2px dashed ${C.amber}`, color: C.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>+</div>
                   <span style={{ color: C.amber, fontSize: 12, fontWeight: 700 }}>New Round</span>
@@ -1879,7 +2165,7 @@ function BPSCPredictor() {
         )}
 
         {/* MAIN PANEL */}
-        <div>
+        <div style={{ order: isMobile ? 1 : 2 }}>
 
           {/* START */}
           {phase === "START" && (
@@ -2137,34 +2423,44 @@ function BPSCPredictor() {
       {/* FOOTER / USER MENU */}
       <div style={{
         position: "fixed", bottom: 0, left: 0, right: 0,
-        background: C.surface, borderTop: `1px solid ${C.border}`,
-        padding: "10px 20px", display: "flex", justifyContent: "space-between",
+        background: `${C.surface}f2`, backdropFilter: "blur(10px)", borderTop: `1px solid ${C.border}`,
+        padding: isMobile ? "8px 12px" : "10px 20px", 
+        display: "flex", justifyContent: "space-between",
         alignItems: "center", zIndex: 100,
+        flexDirection: isMobile ? "column" : "row",
+        gap: isMobile ? 8 : 16
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <img src={user.photoURL || ""} alt="" style={{ width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderBright}` }} referrerPolicy="no-referrer" />
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{user.displayName}</div>
-            <div style={{ fontSize: 10, color: profile?.isPremium ? C.amber : C.muted, display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, width: isMobile ? "100%" : "auto" }}>
+          <img src={user.photoURL || ""} alt="" style={{ width: 28, height: 28, borderRadius: "50%", border: `1px solid ${C.borderBright}` }} referrerPolicy="no-referrer" />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>{user.displayName}</div>
+            <div style={{ fontSize: 9, color: profile?.isPremium ? C.amber : C.muted, display: "flex", alignItems: "center", gap: 4 }}>
               {profile?.isPremium ? <Zap size={10} /> : null}
               {profile?.isPremium ? "PREMIUM" : "FREE PLAN"}
             </div>
           </div>
+          {isMobile && (
+            <button onClick={logout} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+              <LogOut size={12} />
+            </button>
+          )}
         </div>
-        <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ display: "flex", gap: isMobile ? 12 : 16, width: isMobile ? "100%" : "auto", justifyContent: isMobile ? "space-between" : "flex-end", alignItems: "center" }}>
           {!profile?.isPremium && (
-            <button onClick={() => setMainView("subscription")} style={{ background: "transparent", border: "none", color: C.amber, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setMainView("subscription")} style={{ background: "transparent", border: "none", color: C.amber, fontSize: isMobile ? 11 : 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
               <Zap size={14} /> UPGRADE
             </button>
           )}
           {isUserAdmin && (
-            <button onClick={() => setMainView("admin")} style={{ background: "transparent", border: "none", color: C.gemini, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setMainView("admin")} style={{ background: "transparent", border: "none", color: C.gemini, fontSize: isMobile ? 11 : 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
               <Shield size={14} /> ADMIN
             </button>
           )}
-          <button onClick={logout} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-            <LogOut size={14} /> LOGOUT
-          </button>
+          {!isMobile && (
+            <button onClick={logout} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              <LogOut size={14} /> LOGOUT
+            </button>
+          )}
         </div>
       </div>
 
@@ -2198,6 +2494,7 @@ function BPSCPredictor() {
 
 /* ─── LANDING VIEW ───────────────────────────────────────────────────────── */
 function LandingView({ onLogin, config }: { onLogin: () => void, config: any }) {
+  const isMobile = useIsMobile();
   const heroTitle = config?.heroTitle || "BPSC PT Predictor";
   const heroSubtitle = config?.heroSubtitle || "The ultimate EdTech platform for BPSC aspirants. Predict trends, generate current affairs, and master your preparation with AI.";
   const features = config?.features || [
@@ -2240,7 +2537,7 @@ function LandingView({ onLogin, config }: { onLogin: () => void, config: any }) 
           {heroSubtitle}
         </p>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 40 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(180px, 1fr))", gap: isMobile ? 12 : 16, marginBottom: 40 }}>
           {features.map((f: any, i: number) => (
             <FeatureCard key={i} icon={getIcon(f.icon)} title={f.title} desc={f.desc} />
           ))}
@@ -2373,6 +2670,7 @@ function SubscriptionView({ profile, onBack }: any) {
 
 /* ─── ADMIN DASHBOARD ────────────────────────────────────────────────────── */
 function AdminDashboard({ onBack }: any) {
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<"analytics" | "users" | "content" | "llms" | "pricing" | "notifications">("analytics");
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
@@ -2524,16 +2822,16 @@ function AdminDashboard({ onBack }: any) {
   if (loading) return <div style={{ height: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}><Loader label="Loading Admin Panel" accent={C.gemini} /></div>;
 
   return (
-    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "40px 20px 100px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
+    <div style={{ maxWidth: 1000, margin: "0 auto", padding: isMobile ? "20px 16px 100px" : "40px 20px 100px" }}>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 32, gap: isMobile ? 16 : 0 }}>
         <div>
           <button onClick={onBack} style={{ color: C.muted, background: "none", border: "none", cursor: "pointer", marginBottom: 8, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <X size={14} /> Close Admin
           </button>
-          <h2 style={{ fontSize: 32, fontWeight: 900, fontFamily: "'Playfair Display', serif" }}>Enterprise Admin</h2>
+          <h2 style={{ fontSize: isMobile ? 24 : 32, fontWeight: 900, fontFamily: "'Playfair Display', serif" }}>Enterprise Admin</h2>
         </div>
-        <div style={{ display: "flex", gap: 12 }}>
-          <button onClick={exportToCSV} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", gap: 12, width: isMobile ? "100%" : "auto" }}>
+          <button onClick={exportToCSV} style={{ flex: isMobile ? 1 : "initial", padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Download size={16} /> Export CSV
           </button>
         </div>
@@ -2556,7 +2854,7 @@ function AdminDashboard({ onBack }: any) {
         animate={{ opacity: 1, y: 0 }}
       >
         {tab === "analytics" && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(240px, 1fr))", gap: isMobile ? 12 : 20 }}>
             <StatCard title="Total Users" value={stats.totalUsers} icon={<UserIcon size={20} />} trend="+12%" />
             <StatCard title="Premium Users" value={stats.premiumUsers} icon={<Zap size={20} />} trend="+5%" />
             <StatCard title="Total Revenue" value={`₹${stats.revenue}`} icon={<CreditCard size={20} />} trend="+8%" />
@@ -2566,15 +2864,15 @@ function AdminDashboard({ onBack }: any) {
 
         {tab === "users" && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
-            <div style={{ padding: 20, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ padding: 20, borderBottom: `1px solid ${C.border}`, display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", gap: isMobile ? 12 : 0 }}>
               <h3 style={{ fontSize: 16, fontWeight: 700 }}>User Management</h3>
-              <div style={{ position: "relative" }}>
+              <div style={{ position: "relative", width: isMobile ? "100%" : "auto" }}>
                 <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: C.muted }} />
                 <input 
                   placeholder="Search users..." 
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px 8px 34px", color: C.text, fontSize: 13, outline: "none" }} 
+                  style={{ width: isMobile ? "100%" : "auto", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px 8px 34px", color: C.text, fontSize: 13, outline: "none" }} 
                 />
               </div>
             </div>
@@ -2820,14 +3118,15 @@ export default function App() {
 }
 
 function AdminTab({ active, onClick, icon, label }: any) {
+  const isMobile = useIsMobile();
   return (
     <button
       onClick={onClick}
       style={{
-        padding: "10px 16px", borderRadius: 10, border: `1px solid ${active ? C.gemini : C.border}`,
+        padding: isMobile ? "8px 12px" : "10px 16px", borderRadius: 10, border: `1px solid ${active ? C.gemini : C.border}`,
         background: active ? `${C.gemini}15` : C.surface,
         color: active ? C.gemini : C.muted,
-        fontSize: 13, fontWeight: active ? 700 : 500, cursor: "pointer",
+        fontSize: isMobile ? 12 : 13, fontWeight: active ? 700 : 500, cursor: "pointer",
         display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap",
         transition: "all 0.2s"
       }}
@@ -2838,18 +3137,19 @@ function AdminTab({ active, onClick, icon, label }: any) {
 }
 
 function StatCard({ title, value, icon, trend }: any) {
+  const isMobile = useIsMobile();
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 10, background: C.surface, display: "flex", alignItems: "center", justifyContent: "center", color: C.gemini }}>
-          {icon}
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: isMobile ? 16 : 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: isMobile ? 12 : 16 }}>
+        <div style={{ width: isMobile ? 32 : 40, height: isMobile ? 32 : 40, borderRadius: 10, background: C.surface, display: "flex", alignItems: "center", justifyContent: "center", color: C.gemini }}>
+          {React.cloneElement(icon as React.ReactElement<any>, { size: isMobile ? 16 : 20 })}
         </div>
-        <div style={{ color: C.green, fontSize: 12, fontWeight: 700, background: `${C.green}10`, padding: "4px 8px", borderRadius: 6 }}>
+        <div style={{ color: C.green, fontSize: isMobile ? 10 : 12, fontWeight: 700, background: `${C.green}10`, padding: "4px 8px", borderRadius: 6 }}>
           {trend}
         </div>
       </div>
-      <div style={{ fontSize: 28, fontWeight: 900, marginBottom: 4 }}>{value}</div>
-      <div style={{ color: C.muted, fontSize: 13, fontWeight: 500 }}>{title}</div>
+      <div style={{ fontSize: isMobile ? 22 : 28, fontWeight: 900, marginBottom: 4 }}>{value}</div>
+      <div style={{ color: C.muted, fontSize: isMobile ? 11 : 13, fontWeight: 500 }}>{title}</div>
     </div>
   );
 }

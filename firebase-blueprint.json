@@ -11,6 +11,11 @@
         "photoURL": { "type": "string", "format": "uri", "description": "User's profile photo URL" },
         "role": { "type": "string", "enum": ["user", "admin"], "description": "User's role in the platform" },
         "isPremium": { "type": "boolean", "description": "Whether the user has a premium subscription" },
+        "bookmarkedQuestions": { 
+          "type": "array", 
+          "items": { "type": "string" },
+          "description": "List of question IDs or serialized question objects bookmarked by the user"
+        },
         "createdAt": { "type": "string", "format": "date-time", "description": "When the user profile was created" },
         "premiumSince": { "type": "string", "format": "date-time", "description": "When the user became a premium member" }
       },
