@@ -9,7 +9,7 @@ import {
   Share2, Star, Calendar as CalendarIcon, Clock, ChevronDown, ChevronUp, 
   History, Layers, Edit2, Info, RefreshCw, Sparkles, Sun, Moon, Target, 
   MessageSquare, Settings, FileText, MoreVertical, LayoutDashboard, LineChart, 
-  AlertCircle
+  AlertCircle, Play
 } from "lucide-react";
 import { 
   LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, 
@@ -1881,6 +1881,323 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
   );
 }
 
+/* ─── QUIZ GENERATOR ──────────────────────────────────────────────────────── */
+function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: string, profile: any }) {
+  const [timeframe, setTimeframe] = useState<string>("Weekly");
+  const [source, setSource] = useState<string>("Predictions");
+  const [testType, setTestType] = useState<string>("Full Mock Test");
+  const [loading, setLoading] = useState(false);
+  const [quizData, setQuizData] = useState<any>(null);
+  const isMobile = useIsMobile();
+
+  const generateQuiz = async () => {
+    setLoading(true);
+    try {
+      let context = "";
+      if (source === "Predictions") {
+        context = rounds
+          .map(r => Array.isArray(r.predictions?.topics) ? r.predictions.topics.map((p: any) => p.topic).join(", ") : "")
+          .filter(Boolean)
+          .join("\n");
+      } else if (source === "Current Affairs") {
+        context = "Recent Current Affairs for BPSC PT.";
+      } else if (source === "Learned Data") {
+        context = rounds.filter(r => r.validation?.refinedLearnings).map(r => r.validation.refinedLearnings).join("\n");
+      }
+
+      const questionCount = testType === "Full Mock Test" ? 150 : 50;
+      
+      const prompt = `Generate a BPSC-style ${testType} for the ${timeframe} period.
+      Source Context: ${context}
+      Number of questions: ${questionCount}
+      
+      IMPORTANT: Return a JSON object with a "questions" array.
+      Each question object MUST have:
+      - id: string (unique)
+      - question: string
+      - options: string[] (exactly 4 options)
+      - correctOption: number (0-3)
+      - explanation: string
+      - category: string (Subject)
+      - importance: number (1-5)
+      `;
+
+      const res = await getGeminiResponse(null, prompt);
+      setQuizData(res);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to generate quiz.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (quizData) {
+    return <QuizInterface quiz={quizData} onBack={() => setQuizData(null)} accent={accent} />;
+  }
+
+  return (
+    <div className="animate-fade-up">
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+        <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, marginBottom: 8 }}>Quiz Generator 📝</h2>
+        <p style={{ color: C.muted, fontSize: 13, marginBottom: 24 }}>
+          Generate custom practice tests based on AI predictions, current affairs, and system learnings.
+        </p>
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20, marginBottom: 24 }}>
+          {/* Timeframe */}
+          <div>
+            <label style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 10 }}>Timeframe</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {["Weekly", "Monthly", "3 Months", "6 Months", "12 Months"].map(t => (
+                <button 
+                  key={t}
+                  onClick={() => setTimeframe(t)}
+                  style={{
+                    padding: "8px 12px", borderRadius: 8, fontSize: 12,
+                    background: timeframe === t ? `${accent}15` : C.surface,
+                    border: `1px solid ${timeframe === t ? accent : C.border}`,
+                    color: timeframe === t ? accent : C.text,
+                    cursor: "pointer", fontWeight: timeframe === t ? 700 : 400
+                  }}
+                >{t}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Source */}
+          <div>
+            <label style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 10 }}>Content Source</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {["Predictions", "Current Affairs", "Learned Data"].map(s => (
+                <button 
+                  key={s}
+                  onClick={() => setSource(s)}
+                  style={{
+                    padding: "8px 12px", borderRadius: 8, fontSize: 12,
+                    background: source === s ? `${accent}15` : C.surface,
+                    border: `1px solid ${source === s ? accent : C.border}`,
+                    color: source === s ? accent : C.text,
+                    cursor: "pointer", fontWeight: source === s ? 700 : 400
+                  }}
+                >{s}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Test Type */}
+          <div style={{ gridColumn: isMobile ? "span 1" : "span 2" }}>
+            <label style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 10 }}>Test Type</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {["Full Mock Test", "Subject-wise Test"].map(t => (
+                <button 
+                  key={t}
+                  onClick={() => setTestType(t)}
+                  style={{
+                    padding: "8px 12px", borderRadius: 8, fontSize: 12,
+                    background: testType === t ? `${accent}15` : C.surface,
+                    border: `1px solid ${testType === t ? accent : C.border}`,
+                    color: testType === t ? accent : C.text,
+                    cursor: "pointer", fontWeight: testType === t ? 700 : 400
+                  }}
+                >{t}</button>
+              ))}
+            </div>
+            {testType === "Full Mock Test" && (
+              <p style={{ color: C.muted, fontSize: 11, marginTop: 8 }}>Standard 150 questions covering all BPSC subjects.</p>
+            )}
+            {testType === "Subject-wise Test" && (
+              <p style={{ color: C.muted, fontSize: 11, marginTop: 8 }}>Questions distributed based on AI-predicted subject weightage.</p>
+            )}
+          </div>
+        </div>
+
+        <button 
+          onClick={generateQuiz}
+          disabled={loading}
+          style={{
+            width: "100%", padding: "14px", borderRadius: 12, border: "none",
+            background: loading ? C.surface : `linear-gradient(135deg, ${accent}, ${accent}99)`,
+            color: loading ? C.muted : "#000", fontWeight: 800, fontSize: 14, cursor: loading ? "default" : "pointer",
+            fontFamily: "'JetBrains Mono', monospace",
+            boxShadow: loading ? "none" : `0 4px 20px ${accent}40`,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10
+          }}
+        >
+          {loading ? (
+            <Loader label="GENERATING QUIZ" accent={accent} />
+          ) : (
+            <>
+              <Play size={16} />
+              GENERATE TEST
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── QUIZ INTERFACE ──────────────────────────────────────────────────────── */
+function QuizInterface({ quiz, onBack, accent }: { quiz: any, onBack: () => void, accent: string }) {
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [showResult, setShowResult] = useState(false);
+  const isMobile = useIsMobile();
+
+  const questions = quiz.questions || quiz;
+  const currentQ = questions[currentIdx];
+
+  const handleAnswer = (optIdx: number) => {
+    if (answers[currentQ.id] !== undefined) return;
+    setAnswers({ ...answers, [currentQ.id]: optIdx });
+  };
+
+  const next = () => {
+    if (currentIdx < questions.length - 1) {
+      setCurrentIdx(currentIdx + 1);
+    } else {
+      setShowResult(true);
+    }
+  };
+
+  const score = questions.reduce((acc: number, q: any) => {
+    return acc + (answers[q.id] === q.correctOption ? 1 : 0);
+  }, 0);
+
+  if (showResult) {
+    return (
+      <div className="animate-fade-up">
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🏆</div>
+          <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 24, marginBottom: 8 }}>Test Completed!</h2>
+          <div style={{ fontSize: 36, fontWeight: 900, color: accent, marginBottom: 8 }}>
+            {score} / {questions.length}
+          </div>
+          <p style={{ color: C.muted, fontSize: 14, marginBottom: 24 }}>
+            Accuracy: {Math.round((score / questions.length) * 100)}%
+          </p>
+          
+          <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+            <button onClick={onBack} style={{
+              padding: "12px 24px", borderRadius: 10, border: `1px solid ${C.border}`,
+              background: C.surface, color: C.text, fontWeight: 700, cursor: "pointer"
+            }}>Back to Generator</button>
+            <button onClick={() => {
+              setCurrentIdx(0);
+              setAnswers({});
+              setShowResult(false);
+            }} style={{
+              padding: "12px 24px", borderRadius: 10, border: "none",
+              background: accent, color: "#000", fontWeight: 700, cursor: "pointer"
+            }}>Retake Test</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="animate-fade-up">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: accent, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>← Exit Quiz</button>
+        <div style={{ fontSize: 12, color: C.muted, fontFamily: "'JetBrains Mono', monospace" }}>
+          Question {currentIdx + 1} of {questions.length}
+        </div>
+      </div>
+
+      <div style={{ width: "100%", height: 4, background: C.border, borderRadius: 2, marginBottom: 24 }}>
+        <motion.div 
+          initial={{ width: 0 }}
+          animate={{ width: `${((currentIdx + 1) / questions.length) * 100}%` }}
+          style={{ height: "100%", background: accent, borderRadius: 2 }}
+        />
+      </div>
+
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+          <Chip color={C.gemini}>{currentQ.category}</Chip>
+          <div style={{ color: C.muted, fontSize: 11 }}>
+            {Array(currentQ.importance).fill("★").join("")}
+          </div>
+        </div>
+
+        <h3 style={{ color: C.text, fontSize: 18, fontWeight: 600, lineHeight: 1.5, marginBottom: 24 }}>
+          {currentQ.question}
+        </h3>
+
+        <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
+          {currentQ.options.map((opt: string, i: number) => {
+            const isSelected = answers[currentQ.id] === i;
+            const isCorrect = i === currentQ.correctOption;
+            const showFeedback = answers[currentQ.id] !== undefined;
+
+            let bg = C.surface;
+            let border = C.border;
+            let color = C.text;
+
+            if (showFeedback) {
+              if (isCorrect) {
+                bg = `${C.green}15`;
+                border = C.green;
+                color = C.green;
+              } else if (isSelected) {
+                bg = `${C.red}15`;
+                border = C.red;
+                color = C.red;
+              }
+            } else if (isSelected) {
+              border = accent;
+              bg = `${accent}05`;
+            }
+
+            return (
+              <button
+                key={i}
+                onClick={() => handleAnswer(i)}
+                style={{
+                  textAlign: "left", padding: "16px", borderRadius: 10,
+                  background: bg, border: `1px solid ${border}`, color,
+                  fontSize: 14, cursor: showFeedback ? "default" : "pointer",
+                  transition: "all 0.2s", display: "flex", gap: 12
+                }}
+              >
+                <span style={{ opacity: 0.5, fontWeight: 800 }}>{String.fromCharCode(65 + i)}.</span>
+                {opt}
+              </button>
+            );
+          })}
+        </div>
+
+        {answers[currentQ.id] !== undefined && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ padding: 16, background: C.dim, borderRadius: 10, borderLeft: `4px solid ${accent}`, marginBottom: 24 }}
+          >
+            <p style={{ color: C.text, fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+              <strong>Explanation:</strong> {currentQ.explanation}
+            </p>
+          </motion.div>
+        )}
+
+        <button 
+          onClick={next}
+          disabled={answers[currentQ.id] === undefined}
+          style={{
+            width: "100%", padding: "14px", borderRadius: 12, border: "none",
+            background: answers[currentQ.id] === undefined ? C.surface : accent,
+            color: answers[currentQ.id] === undefined ? C.muted : "#000",
+            fontWeight: 800, fontSize: 14, cursor: answers[currentQ.id] === undefined ? "default" : "pointer"
+          }}
+        >
+          {currentIdx === questions.length - 1 ? "FINISH TEST" : "NEXT QUESTION →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ─── ROUND CARD ─────────────────────────────────────────────────────────── */
 function RoundCard({ round, index, active, onClick }: any) {
   const isMobile = useIsMobile();
@@ -2197,7 +2514,7 @@ function BPSCPredictor() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule">("predictor");
+  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule" | "quiz">("predictor");
   const [rounds, setRounds] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [phase, setPhase] = useState("START");
@@ -2635,6 +2952,16 @@ function BPSCPredictor() {
                     paddingBottom: 2, whiteSpace: "nowrap"
                   }}
                 >SCHEDULE 📅</button>
+                <button
+                  onClick={() => setMainView("quiz")}
+                  style={{
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    color: mainView === "quiz" ? C.text : C.muted,
+                    fontSize: isMobile ? 10 : 11, fontWeight: mainView === "quiz" ? 800 : 400,
+                    fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "quiz" ? `2px solid ${accent}` : "none",
+                    paddingBottom: 2, whiteSpace: "nowrap"
+                  }}
+                >QUIZ 📝</button>
               </div>
             </div>
           </div>
@@ -2664,6 +2991,10 @@ function BPSCPredictor() {
       ) : mainView === "schedule" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
           <ExamScheduleView />
+        </div>
+      ) : mainView === "quiz" ? (
+        <div className="animate-fade-up" style={{ marginTop: 20 }}>
+          <QuizGenerator rounds={rounds} accent={accent} profile={profile} />
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: (rounds.length > 0 && !isMobile) ? "190px 1fr" : "1fr", gap: 20 }}>
