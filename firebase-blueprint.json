@@ -104,6 +104,22 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["date", "content", "type", "createdAt"]
+    },
+    "ExamSchedule": {
+      "title": "Exam Schedule",
+      "description": "Upcoming BPSC PT exam dates and deadlines.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "description": "Title of the exam or deadline (e.g., 70th BPSC PT)" },
+        "date": { "type": "string", "format": "date-time", "description": "The date and time of the event" },
+        "type": { "type": "string", "enum": ["exam", "deadline", "result"], "description": "Type of event" },
+        "description": { "type": "string", "description": "Additional details" },
+        "link": { "type": "string", "format": "uri", "description": "Official link" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "date", "type", "createdAt"]
     }
   },
   "firestore": {
@@ -134,6 +150,10 @@
     "/current_affairs/{caId}": {
       "schema": "DailyCurrentAffairs",
       "description": "Collection of curated current affairs."
+    },
+    "/exam_schedule/{scheduleId}": {
+      "schema": "ExamSchedule",
+      "description": "Collection of upcoming exam dates and deadlines."
     }
   }
 }

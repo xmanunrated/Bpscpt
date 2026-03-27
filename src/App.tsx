@@ -2,7 +2,19 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { getGeminiResponse, getGeminiTextResponse } from "./services/geminiService";
 import { auth, signInWithGoogle, logout, onAuthStateChanged, db, User } from "./firebase";
 import { doc, onSnapshot, collection, query, where, getDocs, setDoc, addDoc, deleteDoc, updateDoc, limit, orderBy, Timestamp, getDocFromServer } from "firebase/firestore";
-import { LogOut, User as UserIcon, Shield, CreditCard, TrendingUp, BookOpen, Zap, CheckCircle2, ArrowRight, Layout, Globe, Cpu, DollarSign, Bell, BarChart3, Download, Plus, Trash2, Save, Edit3, X, Search, Filter, Lock, Bookmark, Share2, Star } from "lucide-react";
+import { 
+  LogOut, User as UserIcon, Shield, CreditCard, TrendingUp, BookOpen, Zap, 
+  CheckCircle2, ArrowRight, Layout, Globe, Cpu, DollarSign, Bell, BarChart3, 
+  Download, Plus, Trash2, Save, Edit3, X, Search, Filter, Lock, Bookmark, 
+  Share2, Star, Calendar as CalendarIcon, Clock, ChevronDown, ChevronUp, 
+  History, Layers, Edit2, Info, RefreshCw, Sparkles, Sun, Moon, Target, 
+  MessageSquare, Settings, FileText, MoreVertical, LayoutDashboard, LineChart, 
+  AlertCircle
+} from "lucide-react";
+import { 
+  LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, 
+  ResponsiveContainer, Legend, AreaChart, Area 
+} from 'recharts';
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 
@@ -420,6 +432,42 @@ Match Strength MUST be one of: 'exact', 'partial', or 'related'.
 - 'related': The topic is in the same broad category but a different area (e.g., predicting 'Indian National Movement' and getting 'Gandhi-Irwin Pact').
 
 For 'surprises', provide a brief 'rationale' for why it might have been missed. This rationale should be based on BPSC patterns and source paper analysis, suggesting potential new trends or shifts in focus.`;
+}
+
+function importPrompt(year: number) {
+  return `Analyze the provided BPSC PT ${year} question paper.
+Extract:
+1. Major topics covered (15-20 topics).
+2. Subject-wise distribution.
+3. Specific patterns or "surprises" in this year's paper.
+4. Refined learnings about BPSC's question-setting style based on this paper.
+
+Return ONLY valid JSON:
+{
+  "year": ${year},
+  "topics": [
+    {
+      "id": "slug-1",
+      "topic": "Topic Name",
+      "subTopics": ["Sub-topic 1"],
+      "subject": "History",
+      "probability": 100,
+      "difficulty": "Medium",
+      "questionType": "factual",
+      "likelyPattern": "Direct question",
+      "historicalContext": "Found in this paper",
+      "reasoning": "Direct observation"
+    }
+  ],
+  "subjectWeights": {"History": 20, "Geography": 15},
+  "refinedLearnings": "Detailed learnings for future predictions",
+  "keyImprovement": "Focus more on X",
+  "overallAccuracy": 100,
+  "isImported": true,
+  "confirmedCount": 15,
+  "missedCount": 0
+}
+Match the structure of a validated round so it integrates seamlessly.`;
 }
 
 /* ─── DROP ZONE ──────────────────────────────────────────────────────────── */
@@ -1124,14 +1172,219 @@ function Sparkline({ data, color }: { data: number[], color: string }) {
   );
 }
 
+/* ─── EXAM SCHEDULE ──────────────────────────────────────────────────────── */
+function ExamScheduleView({ isAdmin }: { isAdmin: boolean }) {
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const isMobile = useIsMobile();
+
+  useEffect(() => {
+    const q = query(collection(db, "exam_schedule"), orderBy("date", "asc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setSchedules(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "exam_schedule"));
+    return () => unsub();
+  }, []);
+
+  const getTimeRemaining = (targetDate: string) => {
+    const total = Date.parse(targetDate) - Date.now();
+    if (total <= 0) return "Event passed";
+    const days = Math.floor(total / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((total / (1000 * 60 * 60)) % 24);
+    return `${days}d ${hours}h remaining`;
+  };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Loader label="Loading schedule..." accent={C.gemini} /></div>;
+
+  return (
+    <div style={{ padding: isMobile ? "10px 0" : "20px 0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>Exam Schedule</h2>
+        {isAdmin && <AdminExamSchedule />}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {schedules.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", background: C.surface, borderRadius: 16, border: `1px dashed ${C.border}` }}>
+            <CalendarIcon size={40} color={C.muted} style={{ marginBottom: 12 }} />
+            <p style={{ color: C.muted, margin: 0 }}>No upcoming exams or deadlines scheduled.</p>
+          </div>
+        ) : (
+          schedules.map((s, i) => (
+            <motion.div
+              key={s.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1 }}
+              style={{
+                background: C.card, border: `1px solid ${C.border}`, borderRadius: 16,
+                padding: isMobile ? 16 : 20, position: "relative", overflow: "hidden"
+              }}
+            >
+              <div style={{ 
+                position: "absolute", top: 0, left: 0, width: 4, height: "100%", 
+                background: s.type === 'exam' ? C.gemini : s.type === 'deadline' ? C.red : C.green 
+              }} />
+              
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                    <Chip color={s.type === 'exam' ? C.gemini : s.type === 'deadline' ? C.red : C.green}>
+                      {s.type.toUpperCase()}
+                    </Chip>
+                  </div>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>{s.title}</h3>
+                  <p style={{ color: C.muted, fontSize: 13, margin: "0 0 12px" }}>{s.description}</p>
+                  
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13 }}>
+                      <Clock size={14} color={C.muted} />
+                      {new Date(s.date).toLocaleDateString(undefined, { dateStyle: 'long' })}
+                    </div>
+                    {s.link && (
+                      <a href={s.link} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 4, color: C.gemini, fontSize: 13, textDecoration: "none", fontWeight: 600 }}>
+                        Official Link <Share2 size={12} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: "right", minWidth: 100 }}>
+                  <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Countdown</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: s.type === 'deadline' ? C.red : C.text }}>
+                    {getTimeRemaining(s.date)}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminExamSchedule() {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState("");
+  const [type, setType] = useState("exam");
+  const [desc, setDesc] = useState("");
+  const [link, setLink] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const save = async () => {
+    if (!title || !date) return;
+    setLoading(true);
+    try {
+      const id = doc(collection(db, "exam_schedule")).id;
+      await setDoc(doc(db, "exam_schedule", id), {
+        title, date, type, description: desc, link,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      setOpen(false);
+      setTitle(""); setDate(""); setDesc(""); setLink("");
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} style={{
+        background: C.gemini, color: "#000", border: "none", borderRadius: 8,
+        padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 6
+      }}>
+        <Plus size={14} /> Add Event
+      </button>
+
+      {open && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 20
+        }}>
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 20, width: "100%", maxWidth: 450, padding: 24 }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h3 style={{ margin: 0 }}>Add Exam Event</h3>
+              <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: C.muted }}><X size={20} /></button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <label style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Event Title</label>
+                <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. 70th BPSC PT Exam" style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, color: C.text }} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Date</label>
+                  <input type="datetime-local" value={date} onChange={e => setDate(e.target.value)} style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, color: C.text }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Type</label>
+                  <select value={type} onChange={e => setType(e.target.value)} style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, color: C.text }}>
+                    <option value="exam">Exam</option>
+                    <option value="deadline">Deadline</option>
+                    <option value="result">Result</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Description</label>
+                <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="Brief details..." style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, color: C.text, minHeight: 80 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Official Link (Optional)</label>
+                <input value={link} onChange={e => setLink(e.target.value)} placeholder="https://..." style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, color: C.text }} />
+              </div>
+
+              <button onClick={save} disabled={loading} style={{
+                background: C.gemini, color: "#000", border: "none", borderRadius: 12,
+                padding: 14, fontWeight: 800, cursor: "pointer", marginTop: 10
+              }}>
+                {loading ? "Saving..." : "Save Event"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ─── PREDICTION VIEW ────────────────────────────────────────────────────── */
-function PredictionView({ predictions, validation, accent, priorities, rounds = [] }: any) {
+function PredictionView({ predictions, validation, accent, priorities, rounds = [], onUpdateRound }: any) {
   const isMobile = useIsMobile();
   const [filter, setFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState("All");
   const [matchFilter, setMatchFilter] = useState("All");
-  const [expandedReasoning, setExpandedReasoning] = useState<string | null>(null);
+  const [expandedTopic, setExpandedTopic] = useState<string | null>(null);
+  const [editingDifficulty, setEditingDifficulty] = useState<string | null>(null);
+
+  const handleTagClick = (tag: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSearchQuery(tag);
+  };
+
+  const extractKeywords = (topic: string, subTopics: string[]) => {
+    const stopWords = new Set(["about", "after", "again", "against", "all", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for", "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "me", "more", "most", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should", "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself", "yourselves", "important", "topics", "questions", "based", "study"]);
+    
+    const words = topic.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3 && !stopWords.has(w));
+    const subWords = (subTopics || []).map(s => s.toLowerCase());
+    
+    // Prioritize sub-topics as keywords
+    const combined = [...subWords, ...words];
+    return Array.from(new Set(combined)).slice(0, 6);
+  };
 
   const subjects = ["All", ...new Set(predictions.topics.map((t: any) => t.subject)) as Set<string>];
   const difficulties = ["All", "Easy", "Medium", "Hard"];
@@ -1153,6 +1406,14 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
       .filter((v: any) => v !== undefined)
       .slice(-5);
     return history;
+  };
+
+  const updateDifficulty = (topicId: string, newDifficulty: string) => {
+    const updatedTopics = predictions.topics.map((t: any) => 
+      t.id === topicId ? { ...t, difficulty: newDifficulty } : t
+    );
+    onUpdateRound({ ...predictions, topics: updatedTopics });
+    setEditingDifficulty(null);
   };
 
   const filtered = predictions.topics.filter((t: any) => {
@@ -1178,9 +1439,9 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
           { label: "Confidence", value: `${predictions.confidence}%`, color: accent },
           { label: "Topics", value: predictions.totalTopicsFound, color: C.text },
           {
-            label: validation ? "Accuracy" : "Pending",
-            value: validation ? `${validation.overallAccuracy}%` : "—",
-            color: validation ? (validation.overallAccuracy >= 80 ? C.green : C.amber) : C.muted,
+            label: validation?.isImported ? "Data Type" : (validation ? "Accuracy" : "Pending"),
+            value: validation?.isImported ? "Imported" : (validation ? `${validation.overallAccuracy}%` : "—"),
+            color: validation?.isImported ? C.gemini : (validation ? (validation.overallAccuracy >= 80 ? C.green : C.amber) : C.muted),
           },
         ].map(s => (
           <div key={s.label} style={{
@@ -1285,9 +1546,16 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
                 width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: isMobile ? "10px 12px 10px 32px" : "8px 12px 8px 32px", fontSize: 12, color: C.text, outline: "none"
+                padding: isMobile ? "10px 32px 10px 32px" : "8px 32px 8px 32px", fontSize: 12, color: C.text, outline: "none"
               }}
             />
+            {searchQuery && (
+              <X 
+                size={14} 
+                onClick={() => setSearchQuery("")}
+                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: C.muted, cursor: "pointer" }} 
+              />
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: isMobile ? 12 : 8, flexWrap: "wrap", justifyContent: isMobile ? "space-between" : "flex-start" }}>
@@ -1335,14 +1603,17 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
         const status = getStatus(topic);
         const match = getMatch(topic);
         const sc = status === "hit" ? C.green : status === "miss" ? C.red : accent;
+        const isExpanded = expandedTopic === topic.id;
+
         return (
           <div key={topic.id} style={{
             background: C.card, border: `1px solid ${C.border}`,
             borderLeft: `3px solid ${sc}`, borderRadius: 12,
             padding: isMobile ? "12px" : "12px 14px", marginBottom: 10,
             animation: `fadeUp 0.3s ease ${i * 0.04}s both`,
-            position: "relative"
-          }}>
+            cursor: "pointer",
+            transition: "all 0.2s"
+          }} onClick={() => setExpandedTopic(isExpanded ? null : topic.id)}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {/* Header: Chips and Probability */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -1350,103 +1621,200 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
                   <Chip color={sc}>{status === "hit" ? "✓ HIT" : status === "miss" ? "✗ MISS" : `${topic.probability}%`}</Chip>
                   <Chip color={accent}>{topic.subject}</Chip>
                   {topic.difficulty && (
-                    <Chip color={topic.difficulty === 'Hard' ? C.red : topic.difficulty === 'Medium' ? C.amber : C.green}>
-                      {topic.difficulty}
-                    </Chip>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <Chip color={topic.difficulty === 'Hard' ? C.red : topic.difficulty === 'Medium' ? C.amber : C.green}>
+                        {topic.difficulty}
+                      </Chip>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setEditingDifficulty(topic.id); }}
+                        style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}
+                      >
+                        <Edit3 size={10} />
+                      </button>
+                    </div>
                   )}
                   <Chip color={C.muted}>{topic.questionType}</Chip>
                   <Sparkline data={getTrend(topic.id)} color={accent} />
                 </div>
                 
-                <button 
-                  onClick={() => setExpandedReasoning(expandedReasoning === topic.id ? null : topic.id)}
-                  style={{
-                    background: "none", border: "none", color: accent, fontSize: 10, 
-                    cursor: "pointer", padding: "2px 6px", borderRadius: 4,
-                    display: "flex", alignItems: "center", gap: 4,
-                    fontWeight: 600
-                  }}
-                >
-                  <Zap size={10} /> {isMobile ? "Why?" : "Prediction Rationale"}
-                </button>
+                <div style={{ color: C.muted }}>
+                  {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </div>
               </div>
 
               {/* Topic Title */}
               <p style={{ color: C.text, fontWeight: 700, fontSize: isMobile ? 13 : 14, margin: 0, lineHeight: 1.4 }}>{topic.topic}</p>
               
-              {/* Reasoning (Expanded) */}
-              {expandedReasoning === topic.id && (
-                <motion.div 
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  style={{ 
-                    background: `${accent}08`, border: `1px solid ${accent}25`, 
-                    borderRadius: 8, padding: "10px 12px",
-                    fontSize: 11, color: C.text, lineHeight: 1.5
-                  }}
-                >
-                  <strong style={{ color: accent, display: "block", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Prediction Rationale</strong>
-                  {topic.reasoning}
-                </motion.div>
-              )}
+              {/* Keywords / Tags */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {extractKeywords(topic.topic, topic.subTopics).map((kw: string, idx: number) => (
+                  <button 
+                    key={idx} 
+                    onClick={(e) => handleTagClick(kw, e)}
+                    style={{ 
+                      fontSize: 9, 
+                      background: `${accent}10`, 
+                      color: accent, 
+                      padding: "1px 6px", 
+                      borderRadius: 4, 
+                      border: "none",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      transition: "all 0.2s"
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = `${accent}20`}
+                    onMouseLeave={(e) => e.currentTarget.style.background = `${accent}10`}
+                  >
+                    #{kw}
+                  </button>
+                ))}
+              </div>
               
-              {/* Sub-topics */}
-              {topic.subTopics?.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {topic.subTopics.map((st: string, idx: number) => (
+              {/* Sub-topics (Always visible if not expanded, or part of expanded) */}
+              {!isExpanded && topic.subTopics?.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, opacity: 0.7 }}>
+                  {topic.subTopics.slice(0, 2).map((st: string, idx: number) => (
                     <span key={idx} style={{ fontSize: 9, background: C.dim, color: C.muted, padding: "1px 6px", borderRadius: 4 }}>
                       {st}
                     </span>
                   ))}
+                  {topic.subTopics.length > 2 && <span style={{ fontSize: 9, color: C.muted }}>+{topic.subTopics.length - 2} more</span>}
                 </div>
               )}
 
-              {/* Additional Context */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <p style={{ color: C.muted, fontSize: 10, margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>
-                  Pattern: {topic.likelyPattern}
-                </p>
+              {/* Expanded Details */}
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    style={{ overflow: "hidden" }}
+                  >
+                    <div style={{ 
+                      marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}`,
+                      display: "flex", flexDirection: "column", gap: 12
+                    }}>
+                      {/* Rationale */}
+                      <div>
+                        <h4 style={{ color: accent, fontSize: 10, fontWeight: 800, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                          <Zap size={10} /> AI Rationale
+                        </h4>
+                        <p style={{ color: C.text, fontSize: 12, margin: 0, lineHeight: 1.5 }}>{topic.reasoning}</p>
+                      </div>
 
-                {topic.historicalContext && (
-                  <div style={{ display: "flex", gap: 4, alignItems: "flex-start" }}>
-                    <span style={{ fontSize: 10 }}>📜</span>
-                    <p style={{ color: C.muted, fontSize: 10, fontStyle: "italic", margin: 0 }}>
-                      {topic.historicalContext}
-                    </p>
-                  </div>
+                      {/* Sub-topics (Full list) */}
+                      {topic.subTopics?.length > 0 && (
+                        <div>
+                          <h4 style={{ color: C.muted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", marginBottom: 6 }}>Sub-topics to focus on</h4>
+                          <div style={{ 
+                            display: "flex", 
+                            flexWrap: "wrap", 
+                            gap: 6,
+                            maxHeight: topic.subTopics.length > 10 ? "140px" : "auto",
+                            overflowY: topic.subTopics.length > 10 ? "auto" : "visible",
+                            paddingRight: topic.subTopics.length > 10 ? "6px" : "0",
+                            scrollbarWidth: "thin"
+                          }}>
+                            {topic.subTopics.map((st: string, idx: number) => (
+                              <button 
+                                key={idx} 
+                                onClick={(e) => handleTagClick(st, e)}
+                                style={{ 
+                                  fontSize: 10, 
+                                  background: C.dim, 
+                                  color: C.text, 
+                                  padding: "3px 10px", 
+                                  borderRadius: 6, 
+                                  border: `1px solid ${C.border}`,
+                                  cursor: "pointer",
+                                  transition: "all 0.2s",
+                                  outline: "none",
+                                  textAlign: "left"
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.borderColor = accent;
+                                  e.currentTarget.style.background = `${accent}05`;
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.borderColor = C.border;
+                                  e.currentTarget.style.background = C.dim;
+                                }}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Historical Context */}
+                      {topic.historicalContext && (
+                        <div>
+                          <h4 style={{ color: C.muted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                            <History size={10} /> Historical Context
+                          </h4>
+                          <p style={{ color: C.muted, fontSize: 11, margin: 0, fontStyle: "italic" }}>{topic.historicalContext}</p>
+                        </div>
+                      )}
+
+                      {/* Validation Match Details */}
+                      {match && (
+                        <div style={{ background: `${sc}10`, border: `1px solid ${sc}25`, borderRadius: 8, padding: 10 }}>
+                          <h4 style={{ color: sc, fontSize: 10, fontWeight: 800, textTransform: "uppercase", marginBottom: 4 }}>Validation Match</h4>
+                          <p style={{ color: C.text, fontSize: 12, fontWeight: 700, marginBottom: 4 }}>{match.actualTopic}</p>
+                          <p style={{ color: C.muted, fontSize: 11, margin: 0 }}>{match.explanation}</p>
+                          <div style={{ marginTop: 6 }}>
+                            <Chip color={sc}>Strength: {match.matchStrength}</Chip>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
                 )}
-              </div>
-
-              {/* Actual Match Section */}
-              {match && (
-                <div style={{ marginTop: 4, background: `${C.green}08`, border: `1px solid ${C.green}25`, borderRadius: 8, padding: "8px 12px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <p style={{ color: C.green, fontSize: 9, fontFamily: "'JetBrains Mono', monospace", margin: 0, textTransform: "uppercase", fontWeight: 700 }}>
-                      Actual Match
-                    </p>
-                    {match.matchStrength && (
-                      <span style={{ 
-                        fontSize: 9, background: match.matchStrength === 'exact' ? C.green : match.matchStrength === 'partial' ? C.amber : C.muted,
-                        color: "#000", padding: "1px 6px", borderRadius: 4, fontWeight: 700, textTransform: "uppercase"
-                      }}>
-                        {match.matchStrength}
-                      </span>
-                    )}
-                  </div>
-                  <p style={{ color: C.green, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", margin: "0 0 6px", lineHeight: 1.4 }}>
-                    {match.actualQuestion}
-                  </p>
-                  {match.reasoning && (
-                    <p style={{ color: C.muted, fontSize: 10, margin: 0, fontStyle: "italic", lineHeight: 1.4 }}>
-                      {match.reasoning}
-                    </p>
-                  )}
-                </div>
-              )}
+              </AnimatePresence>
             </div>
           </div>
         );
       })}
+
+      {/* Difficulty Edit Modal */}
+      {editingDifficulty && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(4px)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20
+        }}>
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, width: "100%", maxWidth: 320 }}
+          >
+            <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, marginBottom: 16 }}>Adjust Difficulty</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {["Easy", "Medium", "Hard"].map(d => (
+                <button 
+                  key={d}
+                  onClick={() => updateDifficulty(editingDifficulty, d)}
+                  style={{
+                    padding: "12px", borderRadius: 10, border: `1px solid ${C.border}`,
+                    background: C.surface, color: C.text, fontWeight: 700, cursor: "pointer",
+                    textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center"
+                  }}
+                >
+                  {d}
+                  <Chip color={d === 'Hard' ? C.red : d === 'Medium' ? C.amber : C.green}>{d}</Chip>
+                </button>
+              ))}
+              <button 
+                onClick={() => setEditingDifficulty(null)}
+                style={{ marginTop: 10, background: "none", border: "none", color: C.muted, fontSize: 12, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1462,21 +1830,24 @@ function RoundCard({ round, index, active, onClick }: any) {
       border: `1px solid ${active ? C.borderBright : C.border}`,
       borderLeft: `3px solid ${done ? C.green : active ? m.accent : C.dim}`,
       borderRadius: 10, padding: isMobile ? "10px 12px" : "12px 14px", cursor: "pointer",
-      transition: "all 0.2s", animation: `fadeUp 0.3s ease ${index * 0.07}s both`,
+      transition: "all 0.2s",
+      animation: "fadeUp 0.3s ease " + (index * 0.07) + "s both",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <div style={{ display: "flex", gap: 4, marginBottom: 4, flexWrap: "wrap" }}>
             <Chip color={done ? C.green : active ? m.accent : C.muted}>R{index + 1}</Chip>
             <Chip color={m.accent}>{m.icon} {isMobile ? "" : m.label.split(" ")[0]}</Chip>
-            {done ? (
+            {round.isImported ? (
+              <Chip color={C.gemini}>Imported</Chip>
+            ) : done ? (
               <Chip color={round.validation.overallAccuracy >= 80 ? C.green : C.amber}>{round.validation.overallAccuracy}%</Chip>
             ) : (
               <Chip color={C.amber}>{isMobile ? "!" : "Needs Validation"}</Chip>
             )}
           </div>
           <p style={{ color: C.text, fontSize: isMobile ? 12 : 13, fontWeight: 600, margin: 0 }}>
-            {round.sourceYear} → {round.sourceYear + 1}
+            {round.isImported ? `BPSC PT ${round.sourceYear + 1} Analysis` : `${round.sourceYear} → ${round.sourceYear + 1}`}
           </p>
           {done && (
             <p style={{ color: C.muted, fontSize: 10, margin: "2px 0 0", fontFamily: "'JetBrains Mono', monospace" }}>
@@ -1492,7 +1863,7 @@ function RoundCard({ round, index, active, onClick }: any) {
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /* ─── PERSONALIZED DASHBOARD ────────────────────────────────────────────── */
-function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { rounds: any[], accent: string, profile: any, setMainView: (v: any) => void }) {
+function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { rounds: any[], accent: string, profile: any, setMainView: (v: "predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule") => void }) {
   const [strategy, setStrategy] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const validatedRounds = rounds.filter(r => r.validation);
@@ -1583,6 +1954,12 @@ function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { round
 
   const avgAccuracy = Math.round(validatedRounds.reduce((acc, r) => acc + r.validation.overallAccuracy, 0) / validatedRounds.length);
   
+  const chartData = validatedRounds.map((r, i) => ({
+    name: `R${i + 1}`,
+    accuracy: r.validation.overallAccuracy,
+    year: r.sourceYear + 1
+  }));
+
   const missedTopics = validatedRounds.flatMap(r => r.validation.missed || []);
   const missedBySubject = missedTopics.reduce((acc: any, t: any) => {
     acc[t.subject] = (acc[t.subject] || 0) + 1;
@@ -1620,6 +1997,31 @@ function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { round
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Accuracy Trend Chart */}
+      <div style={{ 
+        background: C.card, border: `1px solid ${C.border}`, borderRadius: 20, padding: 20,
+        height: 300
+      }}>
+        <h3 style={{ fontSize: 11, fontWeight: 700, margin: "0 0 20px", color: C.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Accuracy Trends</h3>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData}>
+            <defs>
+              <linearGradient id="colorAcc" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={accent} stopOpacity={0.3}/>
+                <stop offset="95%" stopColor={accent} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="name" stroke={C.muted} fontSize={10} tickLine={false} axisLine={false} />
+            <YAxis stroke={C.muted} fontSize={10} tickLine={false} axisLine={false} unit="%" />
+            <ReTooltip 
+              contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+              itemStyle={{ color: accent }}
+            />
+            <Area type="monotone" dataKey="accuracy" stroke={accent} fillOpacity={1} fill="url(#colorAcc)" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
           <div style={{ color: accent, fontSize: isMobile ? 20 : 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{avgAccuracy}%</div>
@@ -1733,7 +2135,7 @@ function BPSCPredictor() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard">("predictor");
+  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule">("predictor");
   const [rounds, setRounds] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [phase, setPhase] = useState("START");
@@ -1907,7 +2309,7 @@ function BPSCPredictor() {
   }, [rounds, ready]);
 
   const learningCtx = rounds.filter(r => r.validation?.refinedLearnings)
-    .map((r, i) => `[Round ${i + 1} | ${r.sourceYear}→${r.sourceYear + 1} | ${(MODELS as any)[r.model]?.label || r.model}]: ${r.validation.refinedLearnings}`)
+    .map((r, i) => `[Round ${i + 1} | ${r.isImported ? `BPSC PT ${r.sourceYear + 1} Analysis` : `${r.sourceYear}→${r.sourceYear + 1}`} | ${(MODELS as any)[r.model]?.label || r.model}]: ${r.validation.refinedLearnings}`)
     .join("\n");
 
   /* ── PREDICT ── */
@@ -1926,6 +2328,36 @@ function BPSCPredictor() {
       setError(`Analysis failed: ${e.message}. Try a .txt copy of the paper for better results.`);
     } finally { setLoading(false); }
   }, [sourceFile, sourceYear, model, rounds, learningCtx]);
+
+  /* ── IMPORT HISTORICAL ── */
+  const runImport = useCallback(async () => {
+    if (!sourceFile) return;
+    setLoading(true); setError(null);
+    try {
+      const fd = await readFile(sourceFile);
+      const result = await callAI(model, fd, importPrompt(sourceYear));
+      const newRound = { 
+        sourceYear: sourceYear - 1, 
+        predictions: { 
+          topics: result.topics, 
+          subjectWeights: result.subjectWeights, 
+          confidence: 100, 
+          totalTopicsFound: result.topics.length,
+          patternInsight: result.refinedLearnings
+        }, 
+        validation: result, 
+        model, 
+        createdAt: Date.now(), 
+        isImported: true 
+      };
+      const updated = [...rounds, newRound];
+      setRounds(updated);
+      setActiveIdx(updated.length - 1);
+      setPhase("DONE");
+    } catch (e: any) {
+      setError(`Import failed: ${e.message}`);
+    } finally { setLoading(false); }
+  }, [sourceFile, sourceYear, model, rounds]);
 
   /* ── VALIDATE ── */
   const runValidate = useCallback(async () => {
@@ -2105,6 +2537,16 @@ function BPSCPredictor() {
                     paddingBottom: 2, whiteSpace: "nowrap"
                   }}
                 >DASHBOARD 📊</button>
+                <button
+                  onClick={() => setMainView("schedule")}
+                  style={{
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    color: mainView === "schedule" ? C.text : C.muted,
+                    fontSize: isMobile ? 10 : 11, fontWeight: mainView === "schedule" ? 800 : 400,
+                    fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "schedule" ? `2px solid ${accent}` : "none",
+                    paddingBottom: 2, whiteSpace: "nowrap"
+                  }}
+                >SCHEDULE 📅</button>
               </div>
             </div>
           </div>
@@ -2130,6 +2572,10 @@ function BPSCPredictor() {
       ) : mainView === "dashboard" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
           <PersonalizedDashboard rounds={rounds} accent={accent} profile={profile} setMainView={setMainView} />
+        </div>
+      ) : mainView === "schedule" ? (
+        <div className="animate-fade-up" style={{ marginTop: 20 }}>
+          <ExamScheduleView isAdmin={isUserAdmin} />
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: (rounds.length > 0 && !isMobile) ? "190px 1fr" : "1fr", gap: 20 }}>
@@ -2212,8 +2658,8 @@ function BPSCPredictor() {
                 {/* Year picker */}
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ color: C.muted, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", display: "block", marginBottom: 8 }}>YEAR OF PAPER YOU'RE UPLOADING</label>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {[2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026].map(y => (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", maxHeight: isMobile ? 120 : "none", overflowY: "auto", padding: 4 }}>
+                    {Array.from({ length: 2026 - 2010 + 1 }, (_, i) => 2010 + i).map(y => (
                       <button key={y} onClick={() => setSourceYear(y)} style={{
                         padding: "8px 14px", borderRadius: 8,
                         border: `1px solid ${sourceYear === y ? accent : C.border}`,
@@ -2289,13 +2735,29 @@ function BPSCPredictor() {
 
                 {error && <p style={{ color: C.red, fontSize: 12, marginTop: 12 }}>⚠ {error}</p>}
 
-                <button onClick={runPredict} disabled={!sourceFile || loading} style={{
-                  marginTop: 18, width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
-                  background: sourceFile && !loading ? `linear-gradient(135deg, ${accent}, ${accent}99)` : C.surface,
-                  color: sourceFile && !loading ? "#000" : C.muted,
-                  fontWeight: 800, fontSize: 14, cursor: sourceFile ? "pointer" : "not-allowed",
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}>{loading ? "Analyzing…" : `⚡ Predict ${sourceYear + 1} Topics`}</button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
+                  <button onClick={runPredict} disabled={!sourceFile || loading} style={{
+                    width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
+                    background: sourceFile && !loading ? `linear-gradient(135deg, ${accent}, ${accent}99)` : C.surface,
+                    color: sourceFile && !loading ? "#000" : C.muted,
+                    fontWeight: 800, fontSize: 14, cursor: sourceFile ? "pointer" : "not-allowed",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}>{loading ? "Analyzing…" : `⚡ Predict ${sourceYear + 1} Topics`}</button>
+
+                  <button onClick={runImport} disabled={!sourceFile || loading} style={{
+                    width: "100%", padding: "12px 0", borderRadius: 12, 
+                    border: `1px solid ${C.border}`,
+                    background: sourceFile && !loading ? `${C.gemini}15` : C.surface,
+                    color: sourceFile && !loading ? C.gemini : C.muted,
+                    fontWeight: 700, fontSize: 13, cursor: sourceFile ? "pointer" : "not-allowed",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}>
+                    {loading ? "Importing…" : `📥 Import ${sourceYear} as Historical Data`}
+                  </button>
+                  <p style={{ color: C.muted, fontSize: 10, textAlign: "center", margin: 0 }}>
+                    Importing adds this year's patterns to AI's learning context without predicting next year.
+                  </p>
+                </div>
               </div>
               {loading && <Loader label="Baking for your exam..." accent={accent} />}
             </div>
@@ -2339,6 +2801,10 @@ function BPSCPredictor() {
                   accent={activeAccent} 
                   priorities={activeRound.priorities}
                   rounds={rounds}
+                  onUpdateRound={(updatedPredictions: any) => {
+                    const updatedRounds = rounds.map((r, i) => i === activeIdx ? { ...r, predictions: updatedPredictions } : r);
+                    setRounds(updatedRounds);
+                  }}
                 />
               </div>
 

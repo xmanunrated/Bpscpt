@@ -67,6 +67,14 @@ service cloud.firestore {
              data.description is string;
     }
 
+    function isValidExamSchedule(data) {
+      return data.keys().hasAll(['title', 'date', 'type', 'createdAt']) &&
+             data.title is string &&
+             data.date is string &&
+             data.type in ['exam', 'deadline', 'result'] &&
+             data.createdAt is string;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -88,6 +96,11 @@ service cloud.firestore {
     match /current_affairs/{caId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin() && isValidCurrentAffairs(request.resource.data);
+    }
+
+    match /exam_schedule/{scheduleId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidExamSchedule(request.resource.data);
     }
 
     match /config/{configId} {
