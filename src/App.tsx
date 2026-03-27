@@ -1376,14 +1376,17 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
   };
 
   const extractKeywords = (topic: string, subTopics: string[]) => {
-    const stopWords = new Set(["about", "after", "again", "against", "all", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for", "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "me", "more", "most", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should", "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself", "yourselves", "important", "topics", "questions", "based", "study"]);
+    const stopWords = new Set(["about", "after", "again", "against", "all", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for", "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "me", "more", "most", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should", "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself", "yourselves", "important", "topics", "questions", "based", "study", "exam", "paper", "bpsc", "prelims", "mains"]);
     
-    const words = topic.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3 && !stopWords.has(w));
-    const subWords = (subTopics || []).map(s => s.toLowerCase());
+    const extractWords = (str: string) => 
+      str.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3 && !stopWords.has(w));
+
+    const topicWords = extractWords(topic);
+    const subTopicWords = (subTopics || []).flatMap(s => extractWords(s));
     
-    // Prioritize sub-topics as keywords
-    const combined = [...subWords, ...words];
-    return Array.from(new Set(combined)).slice(0, 6);
+    // Combine and prioritize topic words then sub-topic words
+    const combined = [...topicWords, ...subTopicWords];
+    return Array.from(new Set(combined)).slice(0, 8);
   };
 
   const subjects = ["All", ...new Set(predictions.topics.map((t: any) => t.subject)) as Set<string>];
@@ -1662,21 +1665,32 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
                   <button 
                     key={idx} 
                     onClick={(e) => handleTagClick(kw, e)}
+                    title={`Filter by ${kw}`}
                     style={{ 
                       fontSize: 9, 
                       background: `${accent}10`, 
                       color: accent, 
-                      padding: "1px 6px", 
-                      borderRadius: 4, 
-                      border: "none",
+                      padding: "2px 8px", 
+                      borderRadius: 6, 
+                      border: `1px solid ${accent}20`,
                       cursor: "pointer",
                       fontWeight: 600,
-                      transition: "all 0.2s"
+                      transition: "all 0.2s",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 3
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = `${accent}20`}
-                    onMouseLeave={(e) => e.currentTarget.style.background = `${accent}10`}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = `${accent}20`;
+                      e.currentTarget.style.borderColor = accent;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = `${accent}10`;
+                      e.currentTarget.style.borderColor = `${accent}20`;
+                    }}
                   >
-                    #{kw}
+                    <Search size={8} />
+                    {kw}
                   </button>
                 ))}
               </div>
@@ -1723,43 +1737,51 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
                           <div style={{ 
                             display: "flex", 
                             flexDirection: "column",
-                            gap: 4,
-                            maxHeight: "200px",
+                            gap: 6,
+                            maxHeight: "180px",
                             overflowY: "auto",
-                            paddingRight: "8px",
-                            scrollbarWidth: "thin"
+                            paddingRight: "6px",
+                            scrollbarWidth: "thin",
+                            scrollbarColor: `${accent}40 transparent`
                           }}>
                             {topic.subTopics.map((st: string, idx: number) => (
-                              <button 
+                              <div 
                                 key={idx} 
                                 onClick={(e) => handleTagClick(st, e)}
                                 style={{ 
                                   fontSize: 11, 
                                   background: C.dim, 
                                   color: C.text, 
-                                  padding: "6px 12px", 
-                                  borderRadius: 8, 
+                                  padding: "8px 12px", 
+                                  borderRadius: 10, 
                                   border: `1px solid ${C.border}`,
                                   cursor: "pointer",
                                   transition: "all 0.2s",
-                                  outline: "none",
-                                  textAlign: "left",
                                   display: "flex",
                                   alignItems: "center",
-                                  gap: 8
+                                  gap: 10,
+                                  position: "relative",
+                                  overflow: "hidden"
                                 }}
                                 onMouseEnter={(e) => {
                                   e.currentTarget.style.borderColor = accent;
-                                  e.currentTarget.style.background = `${accent}05`;
+                                  e.currentTarget.style.background = `${accent}08`;
                                 }}
                                 onMouseLeave={(e) => {
                                   e.currentTarget.style.borderColor = C.border;
                                   e.currentTarget.style.background = C.dim;
                                 }}
                               >
-                                <span style={{ color: accent, fontSize: 10 }}>•</span>
-                                {st}
-                              </button>
+                                <div style={{ 
+                                  width: 18, height: 18, borderRadius: 6, background: `${accent}15`, 
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontSize: 9, fontWeight: 800, color: accent
+                                }}>
+                                  {idx + 1}
+                                </div>
+                                <span style={{ flex: 1 }}>{st}</span>
+                                <Search size={10} style={{ opacity: 0.4 }} />
+                              </div>
                             ))}
                           </div>
                         </div>
@@ -1802,8 +1824,11 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
                             <AlertCircle size={10} /> Miss Rationale
                           </h4>
                           <p style={{ color: C.text, fontSize: 11, margin: 0, lineHeight: 1.5 }}>
-                            {getMiss(topic)?.rationale || "This topic was predicted but did not appear in the actual paper. This could be due to a shift in BPSC's recent focus or a one-off variation in the pattern."}
+                            {getMiss(topic)?.rationale || "This topic was predicted but did not appear in the actual paper. BPSC patterns suggest a shift towards more contemporary issues or specific regional developments that were prioritized over this traditional focus area."}
                           </p>
+                          <div style={{ marginTop: 8, fontSize: 9, color: C.muted, fontStyle: "italic" }}>
+                            * Based on historical BPSC trend analysis and recent paper variations.
+                          </div>
                         </div>
                       )}
                     </div>
