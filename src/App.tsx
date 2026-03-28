@@ -145,6 +145,26 @@ const MODELS = {
     icon: "◆",
     strengths: ["Structured JSON output", "Complex reasoning", "Works instantly here"],
   },
+  openai: {
+    id: "openai",
+    label: "GPT-4o",
+    badge: "Premium",
+    badgeColor: C.amber,
+    accent: C.amber,
+    glow: C.amberGlow,
+    icon: "●",
+    strengths: ["Fastest response", "High accuracy", "Versatile"],
+  },
+  o1: {
+    id: "o1",
+    label: "o1-preview",
+    badge: "Enterprise",
+    badgeColor: C.green,
+    accent: C.green,
+    glow: C.greenGlow,
+    icon: "◎",
+    strengths: ["Deep reasoning", "Complex logic", "Best for difficult topics"],
+  }
 };
 
 /* ─── STORAGE HELPER ─────────────────────────────────────────────────────── */
@@ -646,8 +666,36 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
     setMode(m);
     setSubject(s);
     try {
+      // Check cache first
+      const cacheKey = `${m}_${s}`;
+      const cacheRef = doc(db, "ca_cache", cacheKey);
+      const cacheSnap = await getDoc(cacheRef);
+      
+      if (cacheSnap.exists()) {
+        const cacheData = cacheSnap.data();
+        const cacheTime = new Date(cacheData.timestamp).getTime();
+        const now = new Date().getTime();
+        const oneHour = 60 * 60 * 1000;
+        
+        if (now - cacheTime < oneHour) {
+          console.log("Serving from cache:", cacheKey);
+          setData(cacheData.data);
+          setSelectedAnswers({});
+          setShowExplanations({});
+          setLoading(false);
+          return;
+        }
+      }
+
       const prompt = currentAffairsPrompt(m, s);
       const res = await getGeminiResponse(null, prompt);
+      
+      // Save to cache
+      await setDoc(cacheRef, {
+        data: res,
+        timestamp: new Date().toISOString()
+      });
+
       setData(res);
       setSelectedAnswers({});
       setShowExplanations({});
@@ -755,6 +803,19 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
       {/* Content Area */}
       {viewMode === "quiz" ? (
         <>
+          {data && (
+            <div style={{ 
+              background: `${accent}10`, border: `1px solid ${accent}20`, borderRadius: 10, 
+              padding: "8px 12px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" 
+            }}>
+              <div style={{ color: accent, fontSize: 12, fontWeight: 700 }}>
+                {data.questions.length} Questions Generated
+              </div>
+              <div style={{ color: C.muted, fontSize: 10 }}>
+                {mode.toUpperCase()} • {subject.toUpperCase()}
+              </div>
+            </div>
+          )}
           {/* Mode Selector */}
           <div style={{ marginBottom: 16 }}>
             <p style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Timeframe Mode</p>
@@ -1437,7 +1498,25 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
 
   return (
     <div>
-      {/* Stats */}
+      {/* Stats & Share */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, margin: 0 }}>Round Performance</h3>
+        <button 
+          onClick={() => {
+            const shareUrl = `${window.location.origin}?roundId=${predictions.id}`;
+            navigator.clipboard.writeText(shareUrl);
+            alert("Share link copied to clipboard!");
+          }}
+          style={{ 
+            background: `${accent}15`, color: accent, border: `1px solid ${accent}30`, 
+            borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, 
+            cursor: "pointer", display: "flex", alignItems: "center", gap: 6 
+          }}
+        >
+          <Share2 size={14} /> SHARE
+        </button>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
         {[
           { label: "Confidence", value: `${predictions.confidence}%`, color: accent },
@@ -2560,9 +2639,21 @@ function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { round
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-          <div style={{ color: accent, fontSize: isMobile ? 20 : 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{avgAccuracy}%</div>
-          <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>Avg. Prediction Accuracy</div>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ color: accent, fontSize: isMobile ? 20 : 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{avgAccuracy}%</div>
+            <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>Avg. Prediction Accuracy</div>
+          </div>
+          <button 
+            onClick={() => {
+              const text = `My BPSC Prediction Accuracy is ${avgAccuracy}%! Check out BPSC Predictor.`;
+              navigator.clipboard.writeText(text);
+              alert("Accuracy score copied to clipboard!");
+            }}
+            style={{ background: "none", border: "none", color: accent, cursor: "pointer" }}
+          >
+            <Share2 size={16} />
+          </button>
         </div>
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
           <div style={{ color: C.red, fontSize: isMobile ? 20 : 24, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{missedTopics.length}</div>
@@ -2651,6 +2742,35 @@ function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { round
           </div>
         )}
       </div>
+
+      {/* Profile Settings */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 20, padding: 20 }}>
+        <h3 style={{ fontSize: 11, fontWeight: 700, margin: "0 0 20px", color: C.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Profile Settings</h3>
+        <div style={{ display: "grid", gap: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>Physical Education</div>
+              <div style={{ color: C.muted, fontSize: 11 }}>Enable PE related topics in your strategy</div>
+            </div>
+            <button 
+              onClick={async () => {
+                const newVal = !profile?.physicalEducation;
+                await updateDoc(doc(db, "users", profile.uid), { physicalEducation: newVal });
+              }}
+              style={{ 
+                width: 44, height: 24, borderRadius: 12, background: profile?.physicalEducation ? accent : C.border,
+                position: "relative", border: "none", cursor: "pointer", transition: "all 0.2s"
+              }}
+            >
+              <div style={{ 
+                width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                position: "absolute", top: 3, left: profile?.physicalEducation ? 23 : 3,
+                transition: "all 0.2s"
+              }} />
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2692,6 +2812,33 @@ function BPSCPredictor() {
   const [seoConfig, setSeoConfig] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [llmConfigs, setLlmConfigs] = useState<any[]>([]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roundId = params.get("roundId");
+    if (roundId) {
+      const fetchSharedRound = async () => {
+        setLoading(true);
+        try {
+          const roundSnap = await getDoc(doc(db, "rounds", roundId));
+          if (roundSnap.exists()) {
+            const roundData = { id: roundSnap.id, ...roundSnap.data() };
+            setRounds([roundData]);
+            setActiveIdx(0);
+            setPhase("RESULTS");
+            setMainView("predictor");
+          } else {
+            alert("Shared round not found.");
+          }
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchSharedRound();
+    }
+  }, []);
 
   useEffect(() => {
     // Fetch Homepage Config
@@ -3856,7 +4003,9 @@ function AdminDashboard({ onBack, pricing: appPricing }: any) {
   const seedLLMs = async () => {
     const defaults = [
       { id: "gemini", label: "Gemini 1.5 Pro", isEnabled: true, isDefault: true, isPremiumOnly: false, description: "Google's most capable model for complex reasoning and large context." },
-      { id: "claude", label: "Claude 3.5 Sonnet", isEnabled: true, isDefault: false, isPremiumOnly: true, description: "Anthropic's high-performance model with exceptional coding and writing skills." }
+      { id: "claude", label: "Claude 3.5 Sonnet", isEnabled: true, isDefault: false, isPremiumOnly: true, description: "Anthropic's high-performance model with exceptional coding and writing skills." },
+      { id: "openai", label: "GPT-4o", isEnabled: true, isDefault: false, isPremiumOnly: true, description: "OpenAI's flagship model, balanced for speed and intelligence." },
+      { id: "o1", label: "OpenAI o1", isEnabled: true, isDefault: false, isPremiumOnly: true, description: "Advanced reasoning model for complex logical tasks." }
     ];
     for (const m of defaults) {
       await setDoc(doc(db, "llms", m.id), m);

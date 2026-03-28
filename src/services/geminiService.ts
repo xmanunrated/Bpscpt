@@ -20,20 +20,34 @@ export const getGeminiResponse = async (fileData: { type: string, data: string, 
   }
   parts.push({ text: promptText });
 
-  const response: GenerateContentResponse = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [{ parts }],
-    config: {
-      temperature: 0.3,
-      maxOutputTokens: 8192,
-      systemInstruction: "You are a BPSC PT exam expert. Return ONLY valid JSON. No markdown, no backticks, no explanation.",
-      responseMimeType: "application/json",
-      // We don't use responseSchema here because the prompt can be used for different JSON structures (predictions vs CA vs validation)
-    },
-  });
+  let text = "";
+  try {
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [{ parts }],
+      config: {
+        temperature: 0.3,
+        maxOutputTokens: 8192,
+        systemInstruction: "You are a BPSC PT exam expert. Return ONLY valid JSON. No markdown, no backticks, no explanation.",
+        responseMimeType: "application/json",
+      },
+    });
 
-  const text = response.text;
-  if (!text) throw new Error("No response from Gemini");
+    text = response.text || "";
+    if (!text) throw new Error("No response from Gemini");
+  } catch (error: any) {
+    console.error("Gemini API Error:", error);
+    if (error.message?.includes("API_KEY_INVALID") || error.message?.includes("invalid API key")) {
+      throw new Error("Invalid Gemini API key. Please check your configuration in the settings menu.");
+    }
+    if (error.message?.includes("429") || error.message?.includes("quota") || error.message?.includes("Rate limit")) {
+      throw new Error("Gemini API rate limit exceeded. Please wait a moment and try again.");
+    }
+    if (error.message?.includes("safety")) {
+      throw new Error("The request was blocked by AI safety filters. Please try a different prompt or file.");
+    }
+    throw error;
+  }
   
   try {
     // Clean up any potential markdown formatting if the model ignored the instruction
