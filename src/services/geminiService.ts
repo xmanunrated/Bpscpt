@@ -44,32 +44,38 @@ export const getGeminiResponse = async (fileData: { type: string, data: string, 
     
     // Attempt to fix common truncation issues if it's almost valid
     // This is a simple heuristic: if it ends with a comma or a partial object, we try to close it.
-    // However, for complex JSON, it's better to just fail and ask for a retry with more tokens.
+    const repairJSON = (text: string) => {
+      let repaired = text.trim();
+      
+      // If it's already valid, return it
+      try { return JSON.parse(repaired); } catch (e) {}
+
+      // Basic repair for truncated array of objects
+      const arraysToRepair = ['"topics": [', '"questions": [', '"surprises": [', '"confirmed": [', '"missed": ['];
+      for (const arrayKey of arraysToRepair) {
+        if (repaired.includes(arrayKey) && !repaired.endsWith(']}')) {
+          // Remove trailing comma if exists
+          repaired = repaired.replace(/,\s*$/, "");
+          // Close the current object if it's open
+          const openBraces = (repaired.match(/\{/g) || []).length;
+          const closeBraces = (repaired.match(/\}/g) || []).length;
+          for (let i = 0; i < openBraces - closeBraces; i++) {
+            repaired += "}";
+          }
+          // Close array and root object
+          repaired += "]}";
+          try { return JSON.parse(repaired); } catch (e) {}
+        }
+      }
+      return null;
+    };
+
+    const repaired = repairJSON(cleaned);
+    if (repaired) return repaired;
     
     return JSON.parse(cleaned);
   } catch (e) {
     console.error("Failed to parse JSON from Gemini:", text);
-    
-    // Fallback: if it's truncated, try a very basic repair for the most common case (truncated array of objects)
-    try {
-      if (text.includes('"topics": [') && !text.includes(']')) {
-        let repaired = text.trim();
-        // Remove trailing comma if exists
-        repaired = repaired.replace(/,\s*$/, "");
-        // Close the current object if it's open
-        const openBraces = (repaired.match(/\{/g) || []).length;
-        const closeBraces = (repaired.match(/\}/g) || []).length;
-        for (let i = 0; i < openBraces - closeBraces; i++) {
-          repaired += "}";
-        }
-        // Close topics array and root object
-        repaired += "]}";
-        return JSON.parse(repaired);
-      }
-    } catch (innerError) {
-      console.error("Repair failed:", innerError);
-    }
-
     throw new Error("Invalid JSON response from AI. The response might have been too long. Please try again.");
   }
 };

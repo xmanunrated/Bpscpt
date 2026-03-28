@@ -1881,6 +1881,162 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
   );
 }
 
+function ComparisonView({ rounds, accent }: { rounds: any[], accent: string }) {
+  const [idx1, setIdx1] = useState<number>(rounds.length > 1 ? rounds.length - 2 : 0);
+  const [idx2, setIdx2] = useState<number>(rounds.length > 0 ? rounds.length - 1 : 0);
+  const isMobile = useIsMobile();
+
+  const r1 = rounds[idx1];
+  const r2 = rounds[idx2];
+
+  const renderRoundStats = (r: any, title: string) => {
+    if (!r) return <div style={{ color: C.muted, fontSize: 12 }}>Select a round</div>;
+    const v = r.validation;
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, height: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono', monospace" }}>{r.isImported ? "HISTORICAL" : "PREDICTION"}</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{r.sourceYear} → {r.sourceYear + 1}</div>
+          </div>
+          <div style={{ 
+            background: v ? (v.overallAccuracy > 70 ? C.green + "20" : C.amber + "20") : C.border, 
+            color: v ? (v.overallAccuracy > 70 ? C.green : C.amber) : C.muted,
+            padding: "4px 10px", borderRadius: 8, fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace"
+          }}>
+            {v ? `${v.overallAccuracy}%` : "N/A"}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+          <div style={{ background: C.bg, padding: 12, borderRadius: 12, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase" }}>Confirmed</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.green }}>{v?.confirmedCount || 0}</div>
+          </div>
+          <div style={{ background: C.bg, padding: 12, borderRadius: 12, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase" }}>Missed</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.red }}>{v?.missedCount || 0}</div>
+          </div>
+        </div>
+
+        {v && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: C.green }}>✓</span> CONFIRMED TOPICS
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {v.confirmed.slice(0, 8).map((t: any, i: number) => (
+                  <div key={i} style={{ fontSize: 10, background: C.bg, padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.green}30` }}>
+                    {t.topic}
+                  </div>
+                ))}
+                {v.confirmed.length > 8 && <div style={{ fontSize: 10, color: C.muted }}>+{v.confirmed.length - 8} more</div>}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: C.red }}>✗</span> MISSED TOPICS
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {v.missed.slice(0, 8).map((t: any, i: number) => (
+                  <div key={i} style={{ fontSize: 10, background: C.bg, padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.red}30` }}>
+                    {t.topic}
+                  </div>
+                ))}
+                {v.missed.length > 8 && <div style={{ fontSize: 10, color: C.muted }}>+{v.missed.length - 8} more</div>}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: C.amber }}>✨</span> SURPRISES
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {v.surprises.slice(0, 5).map((t: any, i: number) => (
+                  <div key={i} style={{ fontSize: 10, background: C.bg, padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.amber}30` }}>
+                    {t.topic}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+        {!v && (
+          <div style={{ padding: "40px 20px", textAlign: "center", color: C.muted, fontSize: 12, background: C.bg, borderRadius: 12, border: `1px dashed ${C.border}` }}>
+            No validation data available for this round.
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 24, fontWeight: 900, fontFamily: "'Playfair Display', serif" }}>Round Comparison</h2>
+          <p style={{ color: C.muted, fontSize: 13 }}>Analyze performance across different prediction models and years.</p>
+        </div>
+        <div style={{ display: "flex", gap: 12 }}>
+          <select 
+            value={idx1} 
+            onChange={(e) => setIdx1(Number(e.target.value))}
+            style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, padding: "8px 12px", borderRadius: 8, fontSize: 12 }}
+          >
+            {rounds.map((r, i) => (
+              <option key={i} value={i}>Round {i + 1} ({r.sourceYear}→{r.sourceYear+1})</option>
+            ))}
+          </select>
+          <div style={{ display: "flex", alignItems: "center", color: C.muted }}>VS</div>
+          <select 
+            value={idx2} 
+            onChange={(e) => setIdx2(Number(e.target.value))}
+            style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, padding: "8px 12px", borderRadius: 8, fontSize: 12 }}
+          >
+            {rounds.map((r, i) => (
+              <option key={i} value={i}>Round {i + 1} ({r.sourceYear}→{r.sourceYear+1})</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20 }}>
+        {renderRoundStats(r1, "ROUND A")}
+        {renderRoundStats(r2, "ROUND B")}
+      </div>
+
+      {r1?.validation && r2?.validation && (
+        <div style={{ marginTop: 32, background: `linear-gradient(135deg, ${C.card}, ${C.bg})`, border: `1px solid ${C.border}`, borderRadius: 20, padding: 24 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 20 }}>📈</span> Comparative Insights
+          </h3>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 24 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>ACCURACY DELTA</div>
+              <div style={{ fontSize: 28, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace" }}>
+                {Math.abs(r1.validation.overallAccuracy - r2.validation.overallAccuracy)}%
+                <span style={{ fontSize: 14, fontWeight: 400, color: C.muted, marginLeft: 8 }}>
+                  {r2.validation.overallAccuracy > r1.validation.overallAccuracy ? "Improvement" : "Decrease"}
+                </span>
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>MODEL EFFICIENCY</div>
+              <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
+                Round {idx2 + 1} used <strong>{(MODELS as any)[r2.model]?.label || r2.model}</strong> which achieved 
+                {r2.validation.overallAccuracy > r1.validation.overallAccuracy ? " better " : " lower "} 
+                accuracy compared to <strong>{(MODELS as any)[r1.model]?.label || r1.model}</strong> in Round {idx1 + 1}.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── QUIZ GENERATOR ──────────────────────────────────────────────────────── */
 function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: string, profile: any }) {
   const [timeframe, setTimeframe] = useState<string>("Weekly");
@@ -1905,7 +2061,7 @@ function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: str
         context = rounds.filter(r => r.validation?.refinedLearnings).map(r => r.validation.refinedLearnings).join("\n");
       }
 
-      const questionCount = testType === "Full Mock Test" ? 150 : 50;
+      const questionCount = testType === "Full Mock Test" ? 25 : 15;
       
       const prompt = `Generate a BPSC-style ${testType} for the ${timeframe} period.
       Source Context: ${context}
@@ -1920,6 +2076,8 @@ function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: str
       - explanation: string
       - category: string (Subject)
       - importance: number (1-5)
+      
+      Keep explanations concise to avoid truncation.
       `;
 
       const res = await getGeminiResponse(null, prompt);
@@ -2242,7 +2400,7 @@ function RoundCard({ round, index, active, onClick }: any) {
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /* ─── PERSONALIZED DASHBOARD ────────────────────────────────────────────── */
-function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { rounds: any[], accent: string, profile: any, setMainView: (v: "predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule") => void }) {
+function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { rounds: any[], accent: string, profile: any, setMainView: (v: "predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule" | "quiz" | "comparison") => void }) {
   const [strategy, setStrategy] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const validatedRounds = rounds.filter(r => r.validation);
@@ -2514,7 +2672,7 @@ function BPSCPredictor() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule" | "quiz">("predictor");
+  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule" | "quiz" | "comparison">("predictor");
   const [rounds, setRounds] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [phase, setPhase] = useState("START");
@@ -2962,6 +3120,16 @@ function BPSCPredictor() {
                     paddingBottom: 2, whiteSpace: "nowrap"
                   }}
                 >QUIZ 📝</button>
+                <button
+                  onClick={() => setMainView("comparison")}
+                  style={{
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    color: mainView === "comparison" ? C.text : C.muted,
+                    fontSize: isMobile ? 10 : 11, fontWeight: mainView === "comparison" ? 800 : 400,
+                    fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "comparison" ? `2px solid ${accent}` : "none",
+                    paddingBottom: 2, whiteSpace: "nowrap"
+                  }}
+                >COMPARE ⚖️</button>
               </div>
             </div>
           </div>
@@ -2995,6 +3163,10 @@ function BPSCPredictor() {
       ) : mainView === "quiz" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
           <QuizGenerator rounds={rounds} accent={accent} profile={profile} />
+        </div>
+      ) : mainView === "comparison" ? (
+        <div className="animate-fade-up" style={{ marginTop: 20 }}>
+          <ComparisonView rounds={rounds} accent={accent} />
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: (rounds.length > 0 && !isMobile) ? "190px 1fr" : "1fr", gap: 20 }}>
