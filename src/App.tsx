@@ -275,8 +275,8 @@ async function callClaude(fileData: any, promptText: string) {
 }
 
 /* ─── UNIFIED CALL ───────────────────────────────────────────────────────── */
-async function callAI(model: string, fileData: any, promptText: string) {
-  if (model === "gemini") return getGeminiResponse(fileData, promptText);
+async function callAI(model: string, fileData: any, promptText: string, customApiKey?: string) {
+  if (model === "gemini") return getGeminiResponse(fileData, promptText, customApiKey);
   return callClaude(fileData, promptText);
 }
 
@@ -688,7 +688,7 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
       }
 
       const prompt = currentAffairsPrompt(m, s);
-      const res = await getGeminiResponse(null, prompt);
+      const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
       
       // Save to cache
       await setDoc(cacheRef, {
@@ -1026,7 +1026,7 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
                       setActiveCurated(existing);
                     } else {
                       const prompt = curatedCAPrompt(today);
-                      const res = await getGeminiResponse(null, prompt);
+                      const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
                       if (isUserAdmin) {
                         await setDoc(doc(db, "current_affairs", today), res);
                       }
@@ -1054,7 +1054,7 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
                     try {
                       const today = new Date().toISOString().split('T')[0];
                       const prompt = curatedCAPrompt(today);
-                      const res = await getGeminiResponse(null, prompt);
+                      const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
                       await setDoc(doc(db, "current_affairs", today), res);
                       alert("Today's Curated CA generated successfully!");
                     } catch (error) {
@@ -2159,7 +2159,7 @@ function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: str
       Keep explanations concise to avoid truncation.
       `;
 
-      const res = await getGeminiResponse(null, prompt);
+      const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
       setQuizData(res);
     } catch (error) {
       console.error(error);
@@ -2602,7 +2602,7 @@ function PersonalizedDashboard({ rounds, accent, profile, setMainView }: { round
       Provide a concise 3-4 point strategy focusing on weak areas, recurring missed topics, and how to better align with BPSC trends. 
       Format as a simple list.`;
 
-      const res = await getGeminiTextResponse(prompt);
+      const res = await getGeminiTextResponse(prompt, profile?.geminiKey);
       setStrategy(res);
     } catch (error) {
       console.error(error);
@@ -2908,7 +2908,7 @@ function BPSCPredictor() {
         const snap = await getDocFromServer(caRef);
         if (!snap.exists()) {
           const prompt = curatedCAPrompt(today);
-          const res = await getGeminiResponse(null, prompt);
+          const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
           await setDoc(caRef, res);
           
           // Check for weekly aggregation (every Sunday)
@@ -2916,7 +2916,7 @@ function BPSCPredictor() {
           if (dateObj.getDay() === 0) {
             const weeklyId = `weekly_${today}`;
             const weeklyPrompt = curatedCAPrompt(today, "last 7 days");
-            const weeklyRes = await getGeminiResponse(null, weeklyPrompt);
+            const weeklyRes = await getGeminiResponse(null, weeklyPrompt, profile?.geminiKey);
             await setDoc(doc(db, "current_affairs", weeklyId), { ...weeklyRes, type: "weekly" });
           }
           
@@ -2926,7 +2926,7 @@ function BPSCPredictor() {
           if (day === 15 || day === lastDay) {
             const fortId = `fortnightly_${today}`;
             const fortPrompt = curatedCAPrompt(today, "last 15 days");
-            const fortRes = await getGeminiResponse(null, fortPrompt);
+            const fortRes = await getGeminiResponse(null, fortPrompt, profile?.geminiKey);
             await setDoc(doc(db, "current_affairs", fortId), { ...fortRes, type: "fortnightly" });
           }
         }
@@ -3028,7 +3028,7 @@ function BPSCPredictor() {
     setLoading(true); setError(null);
     try {
       const fd = await readFile(sourceFile);
-      const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx, priorities));
+      const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx, priorities), profile?.geminiKey);
       const newRound = { sourceYear, predictions: result, validation: null, model, createdAt: Date.now(), priorities };
       const updated = [...rounds, newRound];
       setRounds(updated);
@@ -3045,7 +3045,7 @@ function BPSCPredictor() {
     setLoading(true); setError(null);
     try {
       const fd = await readFile(sourceFile);
-      const result = await callAI(model, fd, importPrompt(sourceYear));
+      const result = await callAI(model, fd, importPrompt(sourceYear), profile?.geminiKey);
       const newRound = { 
         sourceYear: sourceYear - 1, 
         predictions: { 
@@ -3076,7 +3076,7 @@ function BPSCPredictor() {
     setLoading(true); setError(null);
     try {
       const fd = await readFile(validateFile);
-      const result = await callAI(round.model, fd, validatePrompt(round.predictions, round.sourceYear + 1));
+      const result = await callAI(round.model, fd, validatePrompt(round.predictions, round.sourceYear + 1), profile?.geminiKey);
       const updated = rounds.map((r, i) => i === activeIdx ? { ...r, validation: result } : r);
       setRounds(updated);
       setPhase("DONE");
@@ -4104,6 +4104,7 @@ function AdminDashboard({ onBack, pricing: appPricing }: any) {
                     <th style={{ padding: 16 }}>Role</th>
                     <th style={{ padding: 16 }}>Status</th>
                     <th style={{ padding: 16 }}>Joined</th>
+                    <th style={{ padding: 16 }}>Gemini Key</th>
                     <th style={{ padding: 16 }}>Actions</th>
                   </tr>
                 </thead>
@@ -4122,6 +4123,23 @@ function AdminDashboard({ onBack, pricing: appPricing }: any) {
                       <td style={{ padding: 16 }}><Chip color={u.role === "admin" ? C.gemini : C.muted}>{u.role}</Chip></td>
                       <td style={{ padding: 16 }}><Chip color={u.isPremium ? C.amber : C.green}>{u.isPremium ? "Premium" : "Free"}</Chip></td>
                       <td style={{ padding: 16, color: C.muted }}>{new Date(u.createdAt).toLocaleDateString()}</td>
+                      <td style={{ padding: 16 }}>
+                        <input 
+                          defaultValue={u.geminiKey || ""} 
+                          onBlur={async (e) => {
+                            const newKey = e.target.value;
+                            if (newKey !== (u.geminiKey || "")) {
+                              await updateDoc(doc(db, "users", u.uid), { geminiKey: newKey });
+                              alert(`Gemini Key updated for ${u.displayName}`);
+                            }
+                          }}
+                          placeholder="System Default"
+                          style={{ 
+                            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, 
+                            padding: "4px 8px", color: C.text, fontSize: 11, width: 120, outline: "none" 
+                          }} 
+                        />
+                      </td>
                       <td style={{ padding: 16 }}>
                         <button style={{ background: "none", border: "none", color: C.muted, cursor: "pointer" }}><Edit3 size={16} /></button>
                       </td>

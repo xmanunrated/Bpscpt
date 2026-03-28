@@ -1,8 +1,8 @@
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 
-export const getGeminiResponse = async (fileData: { type: string, data: string, name: string } | null, promptText: string) => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("Gemini API key is not configured. Please check your environment variables.");
+export const getGeminiResponse = async (fileData: { type: string, data: string, name: string } | null, promptText: string, customApiKey?: string) => {
+  const key = customApiKey || process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("Gemini API key is not configured. Please check your environment variables or admin settings.");
   const ai = new GoogleGenAI({ apiKey: key });
   
   const parts: any[] = [];
@@ -94,8 +94,8 @@ export const getGeminiResponse = async (fileData: { type: string, data: string, 
   }
 };
 
-export const getGeminiTextResponse = async (promptText: string) => {
-  const key = process.env.GEMINI_API_KEY;
+export const getGeminiTextResponse = async (promptText: string, customApiKey?: string) => {
+  const key = customApiKey || process.env.GEMINI_API_KEY;
   if (!key) throw new Error("Gemini API key is not configured.");
   const ai = new GoogleGenAI({ apiKey: key });
   
