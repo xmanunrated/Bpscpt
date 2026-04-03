@@ -382,12 +382,25 @@ function curatedCAPrompt(date: string, timeframe: string = "last 12-18 months") 
   }`;
 }
 
+const BPSC_SYLLABUS = `
+OFFICIAL BPSC GENERAL STUDIES SYLLABUS:
+1. General Science: General appreciation and understanding of science, including matters of everyday observation and experience (no special study required).
+2. Current Events: National and international importance.
+3. History of India & Bihar: Emphasis on broad general understanding in social, economic, and political aspects. Salient features of Bihar's history.
+4. Geography (India & Bihar): Physical, social, and economic geography. Main features of Indian agricultural and natural resources. Geographical division of Bihar and its major river systems.
+5. Indian Polity & Economy: Political system, Panchayati Raj, community development, and planning in India and Bihar. Major changes in the economy of Bihar in the post-independence period.
+6. Indian National Movement: 19th-century resurgence, growth of nationalism, and attainment of Independence. Role of Bihar in the freedom movement of India.
+7. General Mental Ability.
+`;
+
 function predictPrompt(sourceYear: number, learningCtx: string, priorities: string[] = []) {
   const priorityText = priorities.length > 0 
     ? `\nUSER PRIORITIES (RANKED):\n${priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}\nCRITICAL INSTRUCTION: You MUST prioritize these specific subjects/topics. Give them significantly more weight in your analysis. For any predicted topic that matches or is closely related to these priorities, you MUST manually boost its 'probability' field (e.g., to 90% or higher) and ensure it is prominently featured in the 'topics' list.\n`
     : "";
 
   return `Analyze this BPSC PT ${sourceYear} question paper and predict the most likely topics for the ${sourceYear + 1} exam.
+
+${BPSC_SYLLABUS}
 
 ${priorityText}
 BIHAR-SPECIFIC ANALYSIS & PRIORITIZATION:
@@ -459,6 +472,9 @@ For 'surprises', provide a brief 'rationale' for why it might have been missed. 
 
 function importPrompt(year: number) {
   return `Analyze the provided BPSC PT ${year} question paper.
+  
+${BPSC_SYLLABUS}
+
 Extract:
 1. Major topics covered (15-20 topics).
 2. Subject-wise distribution.
@@ -2110,6 +2126,82 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
   );
 }
 
+/* ─── LEARNING PROGRESS VIEW ────────────────────────────────────────────── */
+function LearningProgressView({ rounds, accent, learningCtx }: { rounds: any[], accent: string, learningCtx: string }) {
+  const isMobile = useIsMobile();
+  const learningRounds = rounds.filter(r => r.validation?.refinedLearnings);
+
+  return (
+    <div className="animate-fade-up">
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: isMobile ? 16 : 24, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: `${accent}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🧠</div>
+          <div>
+            <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, margin: 0 }}>System Learning Progress</h2>
+            <p style={{ color: C.muted, fontSize: 11, margin: 0 }}>How the AI adapts its BPSC prediction logic over time</p>
+          </div>
+        </div>
+
+        {learningRounds.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "40px 20px", background: `${C.bg}50`, borderRadius: 12, border: `1px dashed ${C.border}` }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+            <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>No learning data yet. Complete a validation round to generate system updates.</p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {learningRounds.map((r, i) => (
+              <div key={r.id} style={{ 
+                background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16,
+                position: "relative", overflow: "hidden"
+              }}>
+                <div style={{ position: "absolute", top: 0, left: 0, width: 4, height: "100%", background: accent }}></div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ color: accent, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, textTransform: "uppercase" }}>
+                      ROUND {learningRounds.length - i} • {r.isImported ? `BPSC PT ${r.sourceYear + 1} Analysis` : `${r.sourceYear}→${r.sourceYear + 1}`}
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 10, marginTop: 2 }}>{new Date(r.createdAt).toLocaleDateString()} • Model: {r.model}</div>
+                  </div>
+                  {r.validation?.overallAccuracy && (
+                    <div style={{ background: `${C.green}15`, color: C.green, padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700 }}>
+                      {r.validation.overallAccuracy}% ACCURACY
+                    </div>
+                  )}
+                </div>
+                <p style={{ color: C.text, fontSize: 13, lineHeight: 1.6, margin: 0 }}>
+                  {r.validation.refinedLearnings}
+                </p>
+                {r.validation.keyImprovement && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}`, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 12 }}>🎯</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>Key Improvement</div>
+                      <div style={{ color: C.text, fontSize: 12, fontWeight: 500 }}>{r.validation.keyImprovement}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {learningCtx && (
+        <div style={{ background: `${accent}05`, border: `1px solid ${accent}20`, borderRadius: 16, padding: 20 }}>
+          <h3 style={{ fontSize: 12, fontWeight: 800, color: accent, marginBottom: 12, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }}>Accumulated Context (Raw)</h3>
+          <pre style={{ 
+            background: C.bg, padding: 16, borderRadius: 10, fontSize: 11, color: C.muted, 
+            whiteSpace: "pre-wrap", margin: 0, border: `1px solid ${C.border}`,
+            lineHeight: 1.5, fontFamily: "'JetBrains Mono', monospace"
+          }}>
+            {learningCtx}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComparisonView({ rounds, accent }: { rounds: any[], accent: string }) {
   const [idx1, setIdx1] = useState<number>(rounds.length > 1 ? rounds.length - 2 : 0);
   const [idx2, setIdx2] = useState<number>(rounds.length > 0 ? rounds.length - 1 : 0);
@@ -2980,7 +3072,7 @@ function BPSCPredictor() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule" | "quiz" | "comparison">("predictor");
+  const [mainView, setMainView] = useState<"predictor" | "ca" | "admin" | "subscription" | "dashboard" | "schedule" | "quiz" | "comparison" | "learning">("predictor");
   const [rounds, setRounds] = useState<any[]>([]);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [phase, setPhase] = useState("START");
@@ -3498,6 +3590,16 @@ function BPSCPredictor() {
                     paddingBottom: 2, whiteSpace: "nowrap"
                   }}
                 >COMPARE ⚖️</button>
+                <button
+                  onClick={() => setMainView("learning")}
+                  style={{
+                    background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                    color: mainView === "learning" ? C.text : C.muted,
+                    fontSize: isMobile ? 10 : 11, fontWeight: mainView === "learning" ? 800 : 400,
+                    fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "learning" ? `2px solid ${accent}` : "none",
+                    paddingBottom: 2, whiteSpace: "nowrap"
+                  }}
+                >LEARNING 🧠</button>
               </div>
             </div>
           </div>
@@ -3535,6 +3637,10 @@ function BPSCPredictor() {
       ) : mainView === "comparison" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
           <ComparisonView rounds={rounds} accent={accent} />
+        </div>
+      ) : mainView === "learning" ? (
+        <div className="animate-fade-up" style={{ marginTop: 20 }}>
+          <LearningProgressView rounds={rounds} accent={accent} learningCtx={learningCtx} />
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: (rounds.length > 0 && !isMobile) ? "190px 1fr" : "1fr", gap: 20 }}>
