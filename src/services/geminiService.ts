@@ -6,7 +6,7 @@ export const getGeminiResponse = async (
   customApiKey?: string,
   sourceUrl?: string
 ) => {
-  const key = customApiKey || process.env.GEMINI_API_KEY;
+  const key = customApiKey || import.meta.env.VITE_GEMINI_API_KEY;
   if (!key) throw new Error("Gemini API key is not configured. Please check your environment variables or admin settings.");
   const ai = new GoogleGenAI({ apiKey: key });
   
@@ -40,7 +40,7 @@ export const getGeminiResponse = async (
   while (attempts < maxAttempts) {
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.0-flash",
         contents: [{ parts }],
         config: {
           temperature: 0.3,
@@ -131,7 +131,7 @@ export const getGeminiResponse = async (
 };
 
 export const getGeminiTextResponse = async (promptText: string, customApiKey?: string) => {
-  const key = customApiKey || process.env.GEMINI_API_KEY;
+  const key = customApiKey || import.meta.env.VITE_GEMINI_API_KEY;
   if (!key) throw new Error("Gemini API key is not configured.");
   const ai = new GoogleGenAI({ apiKey: key });
   
@@ -141,7 +141,7 @@ export const getGeminiTextResponse = async (promptText: string, customApiKey?: s
   while (attempts < maxAttempts) {
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.0-flash",
         contents: [{ parts: [{ text: promptText }] }],
         config: {
           temperature: 0.7,
