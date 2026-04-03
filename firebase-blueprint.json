@@ -9,7 +9,7 @@
         "email": { "type": "string", "format": "email", "description": "User's email address" },
         "displayName": { "type": "string", "description": "User's display name" },
         "photoURL": { "type": "string", "format": "uri", "description": "User's profile photo URL" },
-        "role": { "type": "string", "enum": ["user", "admin"], "description": "User's role in the platform" },
+        "role": { "type": "string", "enum": ["user", "admin", "content_manager", "support_staff"], "description": "User's role in the platform" },
         "isPremium": { "type": "boolean", "description": "Whether the user has a premium subscription" },
         "bookmarkedQuestions": { 
           "type": "array", 
@@ -120,6 +120,32 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "date", "type", "createdAt"]
+    },
+    "CACache": {
+      "title": "Current Affairs Cache",
+      "description": "Cached current affairs questions to save LLM costs.",
+      "type": "object",
+      "properties": {
+        "data": { "type": "object", "description": "The cached CA data" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the cache was created" }
+      },
+      "required": ["data", "timestamp"]
+    },
+    "PredictionRound": {
+      "title": "Prediction Round",
+      "description": "A single round of BPSC PT predictions and its validation.",
+      "type": "object",
+      "properties": {
+        "sourceYear": { "type": "integer" },
+        "predictions": { "type": "object" },
+        "validation": { "type": "object" },
+        "model": { "type": "string" },
+        "createdAt": { "type": "integer" },
+        "priorities": { "type": "array", "items": { "type": "string" } },
+        "isImported": { "type": "boolean" },
+        "uid": { "type": "string", "description": "The user ID who created this round" }
+      },
+      "required": ["sourceYear", "predictions", "model", "createdAt", "uid"]
     }
   },
   "firestore": {
@@ -154,6 +180,14 @@
     "/exam_schedule/{scheduleId}": {
       "schema": "ExamSchedule",
       "description": "Collection of upcoming exam dates and deadlines."
+    },
+    "/ca_cache/{cacheId}": {
+      "schema": "CACache",
+      "description": "Collection of cached current affairs."
+    },
+    "/rounds/{roundId}": {
+      "schema": "PredictionRound",
+      "description": "Collection of shared prediction rounds."
     }
   }
 }

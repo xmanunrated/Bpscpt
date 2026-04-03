@@ -13,7 +13,7 @@ service cloud.firestore {
     //   - email: string (required)
     //   - displayName: string (optional)
     //   - photoURL: string (optional)
-    //   - role: string (required, 'user' or 'admin')
+    //   - role: string (required, 'user', 'admin', 'content_manager', 'support_staff')
     //   - isPremium: bool (required)
     //   - createdAt: timestamp (required)
     //   - premiumSince: timestamp (optional)
@@ -34,8 +34,23 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "ankitrgpv@gmail.com" && request.auth.token.email_verified == true));
+        ((request.auth.token.email == "ankitrgpv@gmail.com" && request.auth.token.email_verified == true) ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    function isContentManager() {
+      return isAuthenticated() && 
+        (isAdmin() || 
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'content_manager'));
+    }
+
+    function isSupportStaff() {
+      return isAuthenticated() && 
+        (isAdmin() || 
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'support_staff'));
     }
 
     function isValidCurrentAffairs(data) {
@@ -47,11 +62,12 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'role', 'isPremium']) &&
+      return data.keys().hasAll(['uid', 'email', 'role', 'isPremium', 'createdAt']) &&
              data.uid is string &&
              data.email is string &&
-             data.role in ['user', 'admin'] &&
-             data.isPremium is bool;
+             data.role in ['user', 'admin', 'content_manager', 'support_staff'] &&
+             data.isPremium is bool &&
+             data.createdAt is string;
     }
 
     function isValidHomepageConfig(data) {
@@ -75,16 +91,33 @@ service cloud.firestore {
              data.createdAt is string;
     }
 
+    function isValidCACache(data) {
+      return data.keys().hasAll(['data', 'timestamp']) &&
+             data.data is map &&
+             data.timestamp is string;
+    }
+
+    function isValidRound(data) {
+      return data.keys().hasAll(['sourceYear', 'predictions', 'model', 'createdAt', 'uid']) &&
+             data.sourceYear is int &&
+             data.predictions is map &&
+             data.model is string &&
+             data.createdAt is int &&
+             data.uid is string;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
+      allow read: if isOwner(userId) || isSupportStaff();
       allow create: if isOwner(userId) && 
                       isValidUser(request.resource.data) && 
-                      request.resource.data.role == 'user' && 
-                      request.resource.data.isPremium == false;
+                      (
+                        (request.resource.data.role == 'user' && request.resource.data.isPremium == false) ||
+                        (request.auth.token.email == "ankitrgpv@gmail.com" && request.auth.token.email_verified == true)
+                      );
       allow update: if isAdmin() || 
                       (isOwner(userId) && 
                        isValidUser(request.resource.data) && 
@@ -95,32 +128,44 @@ service cloud.firestore {
 
     match /current_affairs/{caId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() && isValidCurrentAffairs(request.resource.data);
+      allow write: if isContentManager() && isValidCurrentAffairs(request.resource.data);
     }
 
     match /exam_schedule/{scheduleId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidExamSchedule(request.resource.data);
+      allow write: if isContentManager() && isValidExamSchedule(request.resource.data);
     }
 
     match /config/{configId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isContentManager();
     }
 
     match /llms/{modelId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isContentManager();
     }
 
     match /pricing/{planId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isContentManager();
     }
 
     match /notifications/{notificationId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow write: if isContentManager();
+    }
+
+    match /ca_cache/{cacheId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidCACache(request.resource.data);
+    }
+
+    match /rounds/{roundId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidRound(request.resource.data) && request.resource.data.uid == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin()) && isValidRound(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     // Default deny

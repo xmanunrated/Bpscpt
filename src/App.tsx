@@ -17,6 +17,8 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
+import { AdminRoleManagement } from "./components/AdminRoleManagement";
+import { hasPermission, Role } from "./lib/permissions";
 
 /* ─── TOKENS ─────────────────────────────────────────────────────────────── */
 const C = {
@@ -382,7 +384,7 @@ function curatedCAPrompt(date: string, timeframe: string = "last 12-18 months") 
 
 function predictPrompt(sourceYear: number, learningCtx: string, priorities: string[] = []) {
   const priorityText = priorities.length > 0 
-    ? `\nUSER PRIORITIES (RANKED):\n${priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}\nIMPORTANT: Adjust the prediction algorithm to give these subjects/topics significantly more weight and focus. Ensure they are well-represented in the predicted topics and have higher probabilities if they show any relevance in the source paper or historical trends.\n`
+    ? `\nUSER PRIORITIES (RANKED):\n${priorities.map((p, i) => `${i + 1}. ${p}`).join("\n")}\nCRITICAL INSTRUCTION: You MUST prioritize these specific subjects/topics. Give them significantly more weight in your analysis. For any predicted topic that matches or is closely related to these priorities, you MUST manually boost its 'probability' field (e.g., to 90% or higher) and ensure it is prominently featured in the 'topics' list.\n`
     : "";
 
   return `Analyze this BPSC PT ${sourceYear} question paper and predict the most likely topics for the ${sourceYear + 1} exam.
@@ -412,6 +414,7 @@ Return ONLY valid JSON:
     {
       "id": "slug-1",
       "topic": "Topic Name",
+      "explanation": "Short 1-2 sentence explanation of what this topic entails in the BPSC context.",
       "subTopics": ["Sub-topic 1", "Sub-topic 2"],
       "subject": "History",
       "probability": 85,
@@ -442,7 +445,7 @@ Return ONLY valid JSON:
   "missedCount": 8,
   "confirmed": [{"id":"slug-1","topic":"Topic","subject":"History","actualQuestion":"What happened in...?","matchStrength":"exact", "reasoning": "Strong justification for the match classification based on topic overlap and question depth."}],
   "missed": [{"id":"slug-2","topic":"Topic","reason":"Not present"}],
-  "surprises": [{"topic":"New Topic","subject":"Science", "rationale": "Brief rationale for why this was missed, suggesting a potential new trend or shift in focus based on BPSC patterns and source paper analysis."}],
+  "surprises": [{"topic":"New Topic","subject":"Science", "explanation": "Short explanation of this surprise topic.", "rationale": "Brief rationale for why this was missed, suggesting a potential new trend or shift in focus based on BPSC patterns and source paper analysis."}],
   "refinedLearnings": "Updated findings",
   "keyImprovement": "Focus more on X"
 }
@@ -640,7 +643,7 @@ function CuratedCAView({ ca, accent }: { ca: any, accent: string }) {
 }
 
 /* ─── CURRENT AFFAIRS ENGINE ──────────────────────────────────────────────── */
-function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: string, user: User | null, isUserAdmin: boolean, profile: any }) {
+function CurrentAffairsEngine({ accent, user, isUserAdmin: isStaff, profile }: { accent: string, user: User | null, isUserAdmin: boolean, profile: any }) {
   const isMobile = useIsMobile();
   const [mode, setMode] = useState<CAMode>("daily");
   const [subject, setSubject] = useState<CASubject>("All");
@@ -1027,10 +1030,13 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
                     } else {
                       const prompt = curatedCAPrompt(today);
                       const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
-                      if (isUserAdmin) {
-                        await setDoc(doc(db, "current_affairs", today), res);
+                      if (isStaff) {
+                        const data = { ...res, createdAt: new Date().toISOString() };
+                        await setDoc(doc(db, "current_affairs", today), data);
+                        setActiveCurated(data);
+                      } else {
+                        setActiveCurated(res);
                       }
-                      setActiveCurated(res);
                     }
                   } catch (error) {
                     console.error(error);
@@ -1047,7 +1053,7 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
               >
                 {loading ? "FETCHING..." : "FETCH LATEST NEWS"}
               </button>
-              {isUserAdmin && (
+              {isStaff && (
                 <button 
                   onClick={async () => {
                     setLoading(true);
@@ -1055,7 +1061,8 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
                       const today = new Date().toISOString().split('T')[0];
                       const prompt = curatedCAPrompt(today);
                       const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
-                      await setDoc(doc(db, "current_affairs", today), res);
+                      const data = { ...res, createdAt: new Date().toISOString() };
+                      await setDoc(doc(db, "current_affairs", today), data);
                       alert("Today's Curated CA generated successfully!");
                     } catch (error) {
                       console.error(error);
@@ -1119,7 +1126,7 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin, profile }: { accent: 
                 </div>
               )) : (
                 <div style={{ textAlign: "center", padding: "40px 20px", border: `1px dashed ${C.border}`, borderRadius: 12 }}>
-                  <p style={{ color: C.muted, fontSize: 13 }}>No curated summaries found. {isUserAdmin && "Click 'Generate Today's CA' to create one."}</p>
+                  <p style={{ color: C.muted, fontSize: 13 }}>No curated summaries found. {isStaff && "Click 'Generate Today's CA' to create one."}</p>
                 </div>
               )}
             </div>
@@ -1234,9 +1241,10 @@ function Sparkline({ data, color }: { data: number[], color: string }) {
 }
 
 /* ─── EXAM SCHEDULE ──────────────────────────────────────────────────────── */
-function ExamScheduleView() {
+function ExamScheduleView({ isStaff }: { isStaff: boolean }) {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filterType, setFilterType] = useState<string>("all");
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -1256,22 +1264,122 @@ function ExamScheduleView() {
     return `${days}d ${hours}h remaining`;
   };
 
+  const addToGoogleCalendar = (s: any) => {
+    const date = new Date(s.date);
+    const start = date.toISOString().replace(/-|:|\.\d+/g, "");
+    const end = new Date(date.getTime() + 3600000).toISOString().replace(/-|:|\.\d+/g, "");
+    const url = `https://www.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(s.title)}&dates=${start}/${end}&details=${encodeURIComponent(s.description)}&location=${encodeURIComponent(s.link || "")}&sf=true&output=xml`;
+    window.open(url, "_blank");
+  };
+
+  const downloadICS = (s: any) => {
+    const date = new Date(s.date);
+    const start = date.toISOString().replace(/-|:|\.\d+/g, "");
+    const end = new Date(date.getTime() + 3600000).toISOString().replace(/-|:|\.\d+/g, "");
+    const icsContent = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+DTSTART:${start}
+DTEND:${end}
+SUMMARY:${s.title}
+DESCRIPTION:${s.description}
+LOCATION:${s.link || ""}
+END:VEVENT
+END:VCALENDAR`;
+    const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `${s.title.replace(/\s+/g, "_")}.ics`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const seedSampleData = async () => {
+    const samples = [
+      {
+        title: "70th BPSC PT Prelims Exam",
+        date: "2026-09-30T10:00:00Z",
+        type: "exam",
+        description: "Official preliminary examination for the 70th BPSC batch.",
+        link: "https://bpsc.bih.nic.in",
+        createdAt: new Date().toISOString()
+      },
+      {
+        title: "70th BPSC PT Application Deadline",
+        date: "2026-07-15T23:59:59Z",
+        type: "deadline",
+        description: "Last date to submit the online application form for 70th BPSC.",
+        link: "https://bpsc.bih.nic.in",
+        createdAt: new Date().toISOString()
+      },
+      {
+        title: "69th BPSC PT Final Result",
+        date: "2026-05-20T16:00:00Z",
+        type: "result",
+        description: "Expected date for the release of final results for 69th BPSC.",
+        link: "https://bpsc.bih.nic.in",
+        createdAt: new Date().toISOString()
+      }
+    ];
+
+    try {
+      for (const s of samples) {
+        await addDoc(collection(db, "exam_schedule"), s);
+      }
+      alert("Sample data seeded!");
+    } catch (e) {
+      alert("Failed to seed data: " + (e as Error).message);
+    }
+  };
+
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Loader label="Loading schedule..." accent={C.gemini} /></div>;
+
+  const filteredSchedules = schedules.filter(s => filterType === "all" || s.type === filterType);
 
   return (
     <div style={{ padding: isMobile ? "10px 0" : "20px 0" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>Exam Schedule</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 20, flexDirection: isMobile ? "column" : "row", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <h2 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>Exam Calendar</h2>
+          {isStaff && (
+            <button 
+              onClick={seedSampleData}
+              style={{ background: `${C.gemini}20`, border: "none", borderRadius: 8, padding: "4px 8px", color: C.gemini, fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+            >
+              SEED DATA
+            </button>
+          )}
+        </div>
+        
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, width: isMobile ? "100%" : "auto" }}>
+          {["all", "exam", "deadline", "result"].map(type => (
+            <button
+              key={type}
+              onClick={() => setFilterType(type)}
+              style={{
+                padding: "6px 12px", borderRadius: 8, border: `1px solid ${filterType === type ? C.gemini : C.border}`,
+                background: filterType === type ? `${C.gemini}15` : C.surface,
+                color: filterType === type ? C.gemini : C.muted,
+                fontSize: 11, fontWeight: 700, cursor: "pointer", textTransform: "uppercase",
+                whiteSpace: "nowrap"
+              }}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {schedules.length === 0 ? (
+        {filteredSchedules.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", background: C.surface, borderRadius: 16, border: `1px dashed ${C.border}` }}>
             <CalendarIcon size={40} color={C.muted} style={{ marginBottom: 12 }} />
-            <p style={{ color: C.muted, margin: 0 }}>No upcoming exams or deadlines scheduled.</p>
+            <p style={{ color: C.muted, margin: 0 }}>No upcoming {filterType !== "all" ? filterType : ""} events scheduled.</p>
           </div>
         ) : (
-          schedules.map((s, i) => (
+          filteredSchedules.map((s, i) => (
             <motion.div
               key={s.id}
               initial={{ opacity: 0, y: 10 }}
@@ -1297,7 +1405,7 @@ function ExamScheduleView() {
                   <h3 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>{s.title}</h3>
                   <p style={{ color: C.muted, fontSize: 13, margin: "0 0 12px" }}>{s.description}</p>
                   
-                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13 }}>
                       <Clock size={14} color={C.muted} />
                       {new Date(s.date).toLocaleDateString(undefined, { dateStyle: 'long' })}
@@ -1307,6 +1415,29 @@ function ExamScheduleView() {
                         Official Link <Share2 size={12} />
                       </a>
                     )}
+                    
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button 
+                        onClick={() => addToGoogleCalendar(s)}
+                        style={{ 
+                          display: "flex", alignItems: "center", gap: 4, background: "transparent", border: "none", 
+                          color: C.muted, fontSize: 12, cursor: "pointer", padding: 0, fontWeight: 500 
+                        }}
+                        title="Add to Google Calendar"
+                      >
+                        <CalendarIcon size={12} /> Google Cal
+                      </button>
+                      <button 
+                        onClick={() => downloadICS(s)}
+                        style={{ 
+                          display: "flex", alignItems: "center", gap: 4, background: "transparent", border: "none", 
+                          color: C.muted, fontSize: 12, cursor: "pointer", padding: 0, fontWeight: 500 
+                        }}
+                        title="Download .ics file"
+                      >
+                        <Download size={12} /> iCal
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1604,6 +1735,9 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
                       <span style={{ color: C.text, fontWeight: 700, fontSize: 12 }}>{s.topic}</span>
                       <Chip color={C.red}>{s.subject}</Chip>
                     </div>
+                    {s.explanation && (
+                      <p style={{ color: C.muted, fontSize: 11, margin: "0 0 4px", lineHeight: 1.4 }}>{s.explanation}</p>
+                    )}
                     {s.rationale && (
                       <p style={{ color: C.muted, fontSize: 11, margin: 0, fontStyle: "italic" }}>
                         <span style={{ color: C.red, opacity: 0.8 }}>Rationale:</span> {s.rationale}
@@ -1737,6 +1871,11 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
 
               {/* Topic Title */}
               <p style={{ color: C.text, fontWeight: 700, fontSize: isMobile ? 13 : 14, margin: 0, lineHeight: 1.4 }}>{topic.topic}</p>
+              
+              {/* Explanation */}
+              {topic.explanation && (
+                <p style={{ color: C.muted, fontSize: 11, margin: "4px 0 0", lineHeight: 1.5 }}>{topic.explanation}</p>
+              )}
               
               {/* Keywords / Tags */}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -2120,6 +2259,7 @@ function ComparisonView({ rounds, accent }: { rounds: any[], accent: string }) {
 function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: string, profile: any }) {
   const [timeframe, setTimeframe] = useState<string>("Weekly");
   const [source, setSource] = useState<string>("Predictions");
+  const [customText, setCustomText] = useState<string>("");
   const [testType, setTestType] = useState<string>("Full Mock Test");
   const [loading, setLoading] = useState(false);
   const [quizData, setQuizData] = useState<any>(null);
@@ -2138,15 +2278,21 @@ function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: str
         context = "Recent Current Affairs for BPSC PT.";
       } else if (source === "Learned Data") {
         context = rounds.filter(r => r.validation?.refinedLearnings).map(r => r.validation.refinedLearnings).join("\n");
+      } else if (source === "Custom Text") {
+        context = customText;
       }
 
       const questionCount = testType === "Full Mock Test" ? 25 : 15;
       
       const prompt = `Generate a BPSC-style ${testType} for the ${timeframe} period.
+      ${source === "Custom Text" ? "Focus specifically on 'Bihar Special' content within this text." : ""}
       Source Context: ${context}
       Number of questions: ${questionCount}
       
-      IMPORTANT: Return a JSON object with a "questions" array.
+      IMPORTANT: Return a JSON object with:
+      - insight: string (A brief explanation of why these questions were selected based on BPSC trends for this specific context)
+      - questions: array of objects
+      
       Each question object MUST have:
       - id: string (unique)
       - question: string
@@ -2170,7 +2316,26 @@ function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: str
   };
 
   if (quizData) {
-    return <QuizInterface quiz={quizData} onBack={() => setQuizData(null)} accent={accent} />;
+    return (
+      <div className="animate-fade-up">
+        {quizData.insight && (
+          <div style={{ 
+            background: `${accent}10`, border: `1px solid ${accent}30`, 
+            borderRadius: 16, padding: "16px 20px", marginBottom: 20,
+            display: "flex", gap: 16, alignItems: "flex-start"
+          }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: `${accent}20`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Sparkles size={16} color={accent} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: accent, textTransform: "uppercase", marginBottom: 4 }}>AI Insight</div>
+              <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{quizData.insight}</div>
+            </div>
+          </div>
+        )}
+        <QuizInterface quiz={quizData} onBack={() => setQuizData(null)} accent={accent} />
+      </div>
+    );
   }
 
   return (
@@ -2206,7 +2371,7 @@ function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: str
           <div>
             <label style={{ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 10 }}>Content Source</label>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {["Predictions", "Current Affairs", "Learned Data"].map(s => (
+              {["Predictions", "Current Affairs", "Learned Data", "Custom Text"].map(s => (
                 <button 
                   key={s}
                   onClick={() => setSource(s)}
@@ -2220,6 +2385,18 @@ function QuizGenerator({ rounds, accent, profile }: { rounds: any[], accent: str
                 >{s}</button>
               ))}
             </div>
+            {source === "Custom Text" && (
+              <textarea
+                value={customText}
+                onChange={(e) => setCustomText(e.target.value)}
+                placeholder="Paste your content here (e.g., news article, study notes)..."
+                style={{
+                  width: "100%", height: 120, marginTop: 12, padding: 12, borderRadius: 12,
+                  background: C.surface, border: `1px solid ${C.border}`, color: C.text,
+                  fontSize: 13, resize: "none", outline: "none"
+                }}
+              />
+            )}
           </div>
 
           {/* Test Type */}
@@ -2895,10 +3072,11 @@ function BPSCPredictor() {
   const accent = activeLlm?.accent || C.gemini;
 
   const isUserAdmin = user?.email === "ankitrgpv@gmail.com" || profile?.role === "admin";
+  const isStaff = isUserAdmin || profile?.role === "content_manager" || profile?.role === "support_staff";
 
   /* Auto CA Generator Hook */
   useEffect(() => {
-    if (!user || !isUserAdmin) return;
+    if (!user || !isStaff) return;
 
     const checkAndGenerate = async () => {
       const today = new Date().toISOString().split('T')[0];
@@ -2909,7 +3087,8 @@ function BPSCPredictor() {
         if (!snap.exists()) {
           const prompt = curatedCAPrompt(today);
           const res = await getGeminiResponse(null, prompt, profile?.geminiKey);
-          await setDoc(caRef, res);
+          const data = { ...res, createdAt: new Date().toISOString() };
+          await setDoc(caRef, data);
           
           // Check for weekly aggregation (every Sunday)
           const dateObj = new Date();
@@ -2917,7 +3096,8 @@ function BPSCPredictor() {
             const weeklyId = `weekly_${today}`;
             const weeklyPrompt = curatedCAPrompt(today, "last 7 days");
             const weeklyRes = await getGeminiResponse(null, weeklyPrompt, profile?.geminiKey);
-            await setDoc(doc(db, "current_affairs", weeklyId), { ...weeklyRes, type: "weekly" });
+            const weeklyData = { ...weeklyRes, type: "weekly", createdAt: new Date().toISOString() };
+            await setDoc(doc(db, "current_affairs", weeklyId), weeklyData);
           }
           
           // Check for fortnightly aggregation (15th and last day of month)
@@ -2927,7 +3107,8 @@ function BPSCPredictor() {
             const fortId = `fortnightly_${today}`;
             const fortPrompt = curatedCAPrompt(today, "last 15 days");
             const fortRes = await getGeminiResponse(null, fortPrompt, profile?.geminiKey);
-            await setDoc(doc(db, "current_affairs", fortId), { ...fortRes, type: "fortnightly" });
+            const fortData = { ...fortRes, type: "fortnightly", createdAt: new Date().toISOString() };
+            await setDoc(doc(db, "current_affairs", fortId), fortData);
           }
         }
       } catch (error) {
@@ -2936,7 +3117,25 @@ function BPSCPredictor() {
     };
 
     checkAndGenerate();
-  }, [user, isUserAdmin]);
+  }, [user, isStaff]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, "rounds"), where("uid", "==", user.uid), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const fetched = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+      setRounds(fetched as any);
+      if (fetched.length > 0 && activeIdx === null) {
+        setActiveIdx(0);
+        const last = fetched[0] as any;
+        setPhase(last.validation ? "DONE" : "PREDICTED");
+        if (last.model) setModel(last.model);
+      }
+    }, (err) => {
+      console.error("Error fetching rounds:", err);
+    });
+    return () => unsub();
+  }, [user, activeIdx]);
 
   /* Auth */
   useEffect(() => {
@@ -2996,14 +3195,7 @@ function BPSCPredictor() {
       try {
         const saved = await storage.get("bpsc-v2-rounds");
         if (saved?.value) {
-          const d = JSON.parse(saved.value);
-          setRounds(d.rounds || []);
-          if (d.rounds?.length > 0) {
-            setActiveIdx(d.rounds.length - 1);
-            const last = d.rounds[d.rounds.length - 1];
-            setPhase(last.validation ? "DONE" : "PREDICTED");
-            if (d.rounds[d.rounds.length - 1].model) setModel(d.rounds[d.rounds.length - 1].model);
-          }
+          await storage.delete("bpsc-v2-rounds");
         }
       } catch (e) {}
       setReady(true);
@@ -3014,8 +3206,7 @@ function BPSCPredictor() {
 
   /* Save */
   useEffect(() => {
-    if (!ready || rounds.length === 0) return;
-    storage.set("bpsc-v2-rounds", JSON.stringify({ rounds })).catch(() => {});
+    // Rounds are now in Firestore
   }, [rounds, ready]);
 
   const learningCtx = rounds.filter(r => r.validation?.refinedLearnings)
@@ -3029,10 +3220,21 @@ function BPSCPredictor() {
     try {
       const fd = await readFile(sourceFile);
       const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx, priorities), profile?.geminiKey);
-      const newRound = { sourceYear, predictions: result, validation: null, model, createdAt: Date.now(), priorities };
-      const updated = [...rounds, newRound];
+      const roundId = doc(collection(db, "rounds")).id;
+      const newRound = { 
+        id: roundId,
+        sourceYear, 
+        predictions: { ...result, id: roundId }, 
+        validation: null, 
+        model, 
+        createdAt: Date.now(), 
+        priorities,
+        uid: user?.uid 
+      };
+      if (user) await setDoc(doc(db, "rounds", roundId), newRound);
+      const updated = [newRound, ...rounds];
       setRounds(updated);
-      setActiveIdx(updated.length - 1);
+      setActiveIdx(0);
       setPhase("PREDICTED");
     } catch (e: any) {
       setError(`Analysis failed: ${e.message}. Try a .txt copy of the paper for better results.`);
@@ -3046,23 +3248,28 @@ function BPSCPredictor() {
     try {
       const fd = await readFile(sourceFile);
       const result = await callAI(model, fd, importPrompt(sourceYear), profile?.geminiKey);
+      const roundId = doc(collection(db, "rounds")).id;
       const newRound = { 
+        id: roundId,
         sourceYear: sourceYear - 1, 
         predictions: { 
           topics: result.topics, 
           subjectWeights: result.subjectWeights, 
           confidence: 100, 
           totalTopicsFound: result.topics.length,
-          patternInsight: result.refinedLearnings
+          patternInsight: result.refinedLearnings,
+          id: roundId
         }, 
         validation: result, 
         model, 
         createdAt: Date.now(), 
-        isImported: true 
+        isImported: true,
+        uid: user?.uid
       };
-      const updated = [...rounds, newRound];
+      if (user) await setDoc(doc(db, "rounds", roundId), newRound);
+      const updated = [newRound, ...rounds];
       setRounds(updated);
-      setActiveIdx(updated.length - 1);
+      setActiveIdx(0);
       setPhase("DONE");
     } catch (e: any) {
       setError(`Import failed: ${e.message}`);
@@ -3078,6 +3285,9 @@ function BPSCPredictor() {
       const fd = await readFile(validateFile);
       const result = await callAI(round.model, fd, validatePrompt(round.predictions, round.sourceYear + 1), profile?.geminiKey);
       const updated = rounds.map((r, i) => i === activeIdx ? { ...r, validation: result } : r);
+      if (user && round.id) {
+        await updateDoc(doc(db, "rounds", round.id), { validation: result });
+      }
       setRounds(updated);
       setPhase("DONE");
     } catch (e: any) {
@@ -3256,7 +3466,7 @@ function BPSCPredictor() {
                     fontFamily: "'JetBrains Mono', monospace", borderBottom: mainView === "schedule" ? `2px solid ${accent}` : "none",
                     paddingBottom: 2, whiteSpace: "nowrap"
                   }}
-                >SCHEDULE 📅</button>
+                >CALENDAR 📅</button>
                 <button
                   onClick={() => setMainView("quiz")}
                   style={{
@@ -3297,7 +3507,7 @@ function BPSCPredictor() {
 
       {mainView === "ca" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
-          <CurrentAffairsEngine accent={accent} user={user} isUserAdmin={isUserAdmin} profile={profile} />
+          <CurrentAffairsEngine accent={accent} user={user} isUserAdmin={isStaff} profile={profile} />
         </div>
       ) : mainView === "dashboard" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
@@ -3305,7 +3515,7 @@ function BPSCPredictor() {
         </div>
       ) : mainView === "schedule" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
-          <ExamScheduleView />
+          <ExamScheduleView isStaff={isStaff} />
         </div>
       ) : mainView === "quiz" ? (
         <div className="animate-fade-up" style={{ marginTop: 20 }}>
@@ -3662,9 +3872,9 @@ function BPSCPredictor() {
               <Zap size={14} /> UPGRADE
             </button>
           )}
-          {isUserAdmin && (
+          {isStaff && (
             <button onClick={() => setMainView("admin")} style={{ background: "transparent", border: "none", color: C.gemini, fontSize: isMobile ? 11 : 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-              <Shield size={14} /> ADMIN
+              <Shield size={14} /> {profile?.role === 'admin' ? 'ADMIN' : 'STAFF'}
             </button>
           )}
           {!isMobile && (
@@ -3694,7 +3904,7 @@ function BPSCPredictor() {
             exit={{ opacity: 0 }}
             style={{ position: "fixed", inset: 0, background: `${C.bg}ee`, zIndex: 200, overflowY: "auto" }}
           >
-            <AdminDashboard pricing={pricing} onBack={() => setMainView("predictor")} />
+            <AdminDashboard pricing={pricing} onBack={() => setMainView("predictor")} profile={profile} user={user} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -3871,9 +4081,19 @@ function SubscriptionView({ profile, pricing, onBack }: any) {
 }
 
 /* ─── ADMIN DASHBOARD ────────────────────────────────────────────────────── */
-function AdminDashboard({ onBack, pricing: appPricing }: any) {
+function AdminDashboard({ onBack, pricing: appPricing, profile, user }: any) {
   const isMobile = useIsMobile();
+  const userRole = profile?.role as Role || 'user';
+  const isSuperAdmin = user?.email === "ankitrgpv@gmail.com";
+  
   const [tab, setTab] = useState<"analytics" | "users" | "content" | "llms" | "pricing" | "notifications" | "schedule">("analytics");
+  
+  // Set initial tab based on permissions
+  useEffect(() => {
+    if (userRole === 'content_manager') setTab('content');
+    else if (userRole === 'support_staff') setTab('users');
+  }, [userRole]);
+
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [llms, setLlms] = useState<any[]>([]);
@@ -4058,13 +4278,13 @@ function AdminDashboard({ onBack, pricing: appPricing }: any) {
 
       {/* TABS */}
       <div style={{ display: "flex", gap: 8, marginBottom: 32, overflowX: "auto", paddingBottom: 8 }}>
-        <AdminTab active={tab === "analytics"} onClick={() => setTab("analytics")} icon={<BarChart3 size={16} />} label="Analytics" />
-        <AdminTab active={tab === "users"} onClick={() => setTab("users")} icon={<UserIcon size={16} />} label="Users" />
-        <AdminTab active={tab === "content"} onClick={() => setTab("content")} icon={<Layout size={16} />} label="Content" />
-        <AdminTab active={tab === "llms"} onClick={() => setTab("llms")} icon={<Cpu size={16} />} label="LLMs" />
-        <AdminTab active={tab === "pricing"} onClick={() => setTab("pricing")} icon={<DollarSign size={16} />} label="Pricing" />
-        <AdminTab active={tab === "notifications"} onClick={() => setTab("notifications")} icon={<Bell size={16} />} label="Notifications" />
-        <AdminTab active={tab === "schedule"} onClick={() => setTab("schedule")} icon={<CalendarIcon size={16} />} label="Schedule" />
+        {hasPermission(userRole, 'view_analytics') && <AdminTab active={tab === "analytics"} onClick={() => setTab("analytics")} icon={<BarChart3 size={16} />} label="Analytics" />}
+        {hasPermission(userRole, 'view_users') && <AdminTab active={tab === "users"} onClick={() => setTab("users")} icon={<UserIcon size={16} />} label="Users" />}
+        {hasPermission(userRole, 'manage_content') && <AdminTab active={tab === "content"} onClick={() => setTab("content")} icon={<Layout size={16} />} label="Content" />}
+        {hasPermission(userRole, 'manage_llms') && <AdminTab active={tab === "llms"} onClick={() => setTab("llms")} icon={<Cpu size={16} />} label="LLMs" />}
+        {hasPermission(userRole, 'manage_pricing') && <AdminTab active={tab === "pricing"} onClick={() => setTab("pricing")} icon={<DollarSign size={16} />} label="Pricing" />}
+        {hasPermission(userRole, 'manage_notifications') && <AdminTab active={tab === "notifications"} onClick={() => setTab("notifications")} icon={<Bell size={16} />} label="Notifications" />}
+        {hasPermission(userRole, 'manage_exams') && <AdminTab active={tab === "schedule"} onClick={() => setTab("schedule")} icon={<CalendarIcon size={16} />} label="Schedule" />}
       </div>
 
       {/* TAB CONTENT */}
@@ -4084,70 +4304,7 @@ function AdminDashboard({ onBack, pricing: appPricing }: any) {
 
         {tab === "users" && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
-            <div style={{ padding: 20, borderBottom: `1px solid ${C.border}`, display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", gap: isMobile ? 12 : 0 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700 }}>User Management</h3>
-              <div style={{ position: "relative", width: isMobile ? "100%" : "auto" }}>
-                <Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: C.muted }} />
-                <input 
-                  placeholder="Search users..." 
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  style={{ width: isMobile ? "100%" : "auto", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px 8px 34px", color: C.text, fontSize: 13, outline: "none" }} 
-                />
-              </div>
-            </div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ textAlign: "left", color: C.muted, borderBottom: `1px solid ${C.border}` }}>
-                    <th style={{ padding: 16 }}>User</th>
-                    <th style={{ padding: 16 }}>Role</th>
-                    <th style={{ padding: 16 }}>Status</th>
-                    <th style={{ padding: 16 }}>Joined</th>
-                    <th style={{ padding: 16 }}>Gemini Key</th>
-                    <th style={{ padding: 16 }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.filter(u => u.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) || u.email?.toLowerCase().includes(searchQuery.toLowerCase())).map((u: any) => (
-                    <tr key={u.uid} style={{ borderBottom: `1px solid ${C.border}` }}>
-                      <td style={{ padding: 16 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <img src={u.photoURL} alt="" style={{ width: 28, height: 28, borderRadius: "50%" }} />
-                          <div>
-                            <div style={{ fontWeight: 700 }}>{u.displayName}</div>
-                            <div style={{ fontSize: 11, color: C.muted }}>{u.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ padding: 16 }}><Chip color={u.role === "admin" ? C.gemini : C.muted}>{u.role}</Chip></td>
-                      <td style={{ padding: 16 }}><Chip color={u.isPremium ? C.amber : C.green}>{u.isPremium ? "Premium" : "Free"}</Chip></td>
-                      <td style={{ padding: 16, color: C.muted }}>{new Date(u.createdAt).toLocaleDateString()}</td>
-                      <td style={{ padding: 16 }}>
-                        <input 
-                          defaultValue={u.geminiKey || ""} 
-                          onBlur={async (e) => {
-                            const newKey = e.target.value;
-                            if (newKey !== (u.geminiKey || "")) {
-                              await updateDoc(doc(db, "users", u.uid), { geminiKey: newKey });
-                              alert(`Gemini Key updated for ${u.displayName}`);
-                            }
-                          }}
-                          placeholder="System Default"
-                          style={{ 
-                            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, 
-                            padding: "4px 8px", color: C.text, fontSize: 11, width: 120, outline: "none" 
-                          }} 
-                        />
-                      </td>
-                      <td style={{ padding: 16 }}>
-                        <button style={{ background: "none", border: "none", color: C.muted, cursor: "pointer" }}><Edit3 size={16} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <AdminRoleManagement currentUserRole={userRole} isSuperAdmin={isSuperAdmin} />
           </div>
         )}
 
