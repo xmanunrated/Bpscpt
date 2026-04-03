@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 
 export const getGeminiResponse = async (
@@ -41,7 +40,7 @@ export const getGeminiResponse = async (
   while (attempts < maxAttempts) {
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash-lite",
         contents: [{ parts }],
         config: {
           temperature: 0.3,
@@ -133,7 +132,7 @@ export const getGeminiTextResponse = async (promptText: string, customApiKey?: s
   while (attempts < maxAttempts) {
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash-lite",
         contents: [{ parts: [{ text: promptText }] }],
         config: {
           temperature: 0.7,
@@ -143,7 +142,7 @@ export const getGeminiTextResponse = async (promptText: string, customApiKey?: s
 
       return response.text || "No response from AI.";
     } catch (error: any) {
-      attempts++;
+      attempts++; 
       console.error(`Gemini Text API Attempt ${attempts} failed:`, error);
 
       const isTransient = 
