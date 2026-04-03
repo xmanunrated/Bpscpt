@@ -8,8 +8,7 @@ import cookieParser from "cookie-parser";
 import session from "express-session";
 import admin from "firebase-admin";
 import multer from "multer";
-// @ts-ignore
-import pdf from "pdf-parse/lib/pdf-parse.js";
+import pdf from "pdf-parse";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,9 +37,12 @@ function getFirebaseAdmin() {
 }
 
 async function startServer() {
+  process.env.NODE_ENV = "development";
+  console.log("Starting server...");
   const app = express();
   const PORT = 3000;
 
+  console.log("Setting up middleware...");
   app.use(express.json());
   app.use(cookieParser());
   app.use(session({
@@ -50,6 +52,7 @@ async function startServer() {
     cookie: { secure: process.env.NODE_ENV === "production", sameSite: "none" }
   }));
 
+  console.log("Setting up API routes...");
   // API: Health Check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
@@ -148,10 +151,12 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    console.log("Starting Vite server...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
+    console.log("Vite server started.");
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
@@ -163,6 +168,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log("Server is ready to receive requests.");
   });
 }
 

@@ -1,0 +1,16 @@
+import express from "express";
+
+const app = express();
+const PORT = 3000;
+
+app.get("/", (req, res) => {
+  res.send("<h1>Simple Server is Working!</h1>");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});

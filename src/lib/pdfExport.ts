@@ -1,4 +1,4 @@
-import { jsPDF } from "jspdf";
+import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
 export const exportToPDF = async (elementId: string, filename: string) => {

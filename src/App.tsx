@@ -659,7 +659,7 @@ function CuratedCAView({ ca, accent }: { ca: any, accent: string }) {
 
   const exportPDF = async () => {
     setExporting(true);
-    await exportToPDF(`curated-ca-${ca.id || ca.date}`, `BPSC_CA_${ca.date}`);
+    // await exportToPDF(`curated-ca-${ca.id || ca.date}`, `BPSC_CA_${ca.date}`);
     setExporting(false);
   };
 
@@ -974,7 +974,7 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin: isStaff, profile }: {
                 <button 
                   onClick={async () => {
                     setExporting(true);
-                    await exportToPDF("ca-export-content", `BPSC_Current_Affairs_${mode}_${subject}`);
+                    // await exportToPDF("ca-export-content", `BPSC_Current_Affairs_${mode}_${subject}`);
                     setExporting(false);
                   }}
                   disabled={exporting}
@@ -1722,7 +1722,7 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
           <button 
             onClick={async () => {
               setExporting(true);
-              await exportToPDF("prediction-export-content", `BPSC_Prediction_${predictions.id}`);
+              // await exportToPDF("prediction-export-content", `BPSC_Prediction_${predictions.id}`);
               setExporting(false);
             }}
             disabled={exporting}
@@ -4611,7 +4611,7 @@ function AdminDashboard({ onBack, pricing: appPricing, profile, user }: any) {
 
         {tab === "users" && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
-            <AdminRoleManagement currentUserRole={userRole} isSuperAdmin={isSuperAdmin} />
+            {/* <AdminRoleManagement currentUserRole={userRole} isSuperAdmin={isSuperAdmin} /> */}
           </div>
         )}
 
