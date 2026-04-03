@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 import { AdminRoleManagement } from "./components/AdminRoleManagement";
 import { hasPermission, Role } from "./lib/permissions";
+import { exportToPDF } from "./lib/pdfExport";
 
 /* ─── TOKENS ─────────────────────────────────────────────────────────────── */
 const C = {
@@ -645,6 +646,7 @@ function ModelSelector({ selected, onSelect, configs, isPremium }: any) {
 }
 
 function CuratedCAView({ ca, accent }: { ca: any, accent: string }) {
+  const [exporting, setExporting] = useState(false);
   const downloadCA = () => {
     const blob = new Blob([ca.content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
@@ -655,23 +657,42 @@ function CuratedCAView({ ca, accent }: { ca: any, accent: string }) {
     URL.revokeObjectURL(url);
   };
 
+  const exportPDF = async () => {
+    setExporting(true);
+    await exportToPDF(`curated-ca-${ca.id || ca.date}`, `BPSC_CA_${ca.date}`);
+    setExporting(false);
+  };
+
   return (
-    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+    <div id={`curated-ca-${ca.id || ca.date}`} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
           <h3 style={{ color: C.text, fontSize: 16, fontWeight: 700, margin: 0 }}>Curated CA: {ca.date}</h3>
           <p style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>{ca.type.toUpperCase()} SUMMARY • {ca.subjects?.length || 0} SUBJECTS</p>
         </div>
-        <button 
-          onClick={downloadCA}
-          style={{ 
-            background: accent, color: "#000", border: "none", borderRadius: 8, 
-            padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-            display: "flex", alignItems: "center", gap: 8
-          }}
-        >
-          <Download size={14} /> Download
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button 
+            onClick={exportPDF}
+            disabled={exporting}
+            style={{ 
+              background: `${C.green}15`, color: C.green, border: `1px solid ${C.green}30`, borderRadius: 8, 
+              padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: exporting ? "default" : "pointer",
+              display: "flex", alignItems: "center", gap: 8
+            }}
+          >
+            <Download size={14} /> {exporting ? "EXPORTING..." : "PDF"}
+          </button>
+          <button 
+            onClick={downloadCA}
+            style={{ 
+              background: accent, color: "#000", border: "none", borderRadius: 8, 
+              padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 8
+            }}
+          >
+            <Download size={14} /> MD
+          </button>
+        </div>
       </div>
       
       <div style={{ color: C.text, fontSize: 13, lineHeight: 1.6 }}>
@@ -686,6 +707,7 @@ function CuratedCAView({ ca, accent }: { ca: any, accent: string }) {
 /* ─── CURRENT AFFAIRS ENGINE ──────────────────────────────────────────────── */
 function CurrentAffairsEngine({ accent, user, isUserAdmin: isStaff, profile }: { accent: string, user: User | null, isUserAdmin: boolean, profile: any }) {
   const isMobile = useIsMobile();
+  const [exporting, setExporting] = useState(false);
   const [mode, setMode] = useState<CAMode>("daily");
   const [subject, setSubject] = useState<CASubject>("All");
   const [loading, setLoading] = useState(false);
@@ -947,7 +969,24 @@ function CurrentAffairsEngine({ accent, user, isUserAdmin: isStaff, profile }: {
           )}
 
           {data && !loading && (
-            <div style={{ animation: "fadeIn 0.5s ease-out" }}>
+            <div id="ca-export-content" style={{ animation: "fadeIn 0.5s ease-out", background: C.bg, padding: 4 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+                <button 
+                  onClick={async () => {
+                    setExporting(true);
+                    await exportToPDF("ca-export-content", `BPSC_Current_Affairs_${mode}_${subject}`);
+                    setExporting(false);
+                  }}
+                  disabled={exporting}
+                  style={{ 
+                    background: `${C.green}15`, color: C.green, border: `1px solid ${C.green}30`, 
+                    borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, 
+                    cursor: exporting ? "default" : "pointer", display: "flex", alignItems: "center", gap: 6 
+                  }}
+                >
+                  <Download size={14} /> {exporting ? "EXPORTING..." : "EXPORT PDF"}
+                </button>
+              </div>
               <div style={{
                 background: `${accent}08`, border: `1px solid ${accent}25`, borderRadius: 10,
                 padding: "12px 16px", marginBottom: 24, display: "flex", gap: 10,
@@ -1596,6 +1635,7 @@ function AdminExamSchedule({ onAdded }: { onAdded?: () => void }) {
 /* ─── PREDICTION VIEW ────────────────────────────────────────────────────── */
 function PredictionView({ predictions, validation, accent, priorities, rounds = [], onUpdateRound }: any) {
   const isMobile = useIsMobile();
+  const [exporting, setExporting] = useState(false);
   const [filter, setFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState("All");
@@ -1675,22 +1715,40 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
   return (
     <div>
       {/* Stats & Share */}
+    <div id="prediction-export-content" style={{ background: C.card, padding: 2 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, margin: 0 }}>Round Performance</h3>
-        <button 
-          onClick={() => {
-            const shareUrl = `${window.location.origin}?roundId=${predictions.id}`;
-            navigator.clipboard.writeText(shareUrl);
-            alert("Share link copied to clipboard!");
-          }}
-          style={{ 
-            background: `${accent}15`, color: accent, border: `1px solid ${accent}30`, 
-            borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, 
-            cursor: "pointer", display: "flex", alignItems: "center", gap: 6 
-          }}
-        >
-          <Share2 size={14} /> SHARE
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button 
+            onClick={async () => {
+              setExporting(true);
+              await exportToPDF("prediction-export-content", `BPSC_Prediction_${predictions.id}`);
+              setExporting(false);
+            }}
+            disabled={exporting}
+            style={{ 
+              background: `${C.green}15`, color: C.green, border: `1px solid ${C.green}30`, 
+              borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, 
+              cursor: exporting ? "default" : "pointer", display: "flex", alignItems: "center", gap: 6 
+            }}
+          >
+            <Download size={14} /> {exporting ? "EXPORTING..." : "EXPORT PDF"}
+          </button>
+          <button 
+            onClick={() => {
+              const shareUrl = `${window.location.origin}?roundId=${predictions.id}`;
+              navigator.clipboard.writeText(shareUrl);
+              alert("Share link copied to clipboard!");
+            }}
+            style={{ 
+              background: `${accent}15`, color: accent, border: `1px solid ${accent}30`, 
+              borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700, 
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 6 
+            }}
+          >
+            <Share2 size={14} /> SHARE
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
@@ -2147,6 +2205,7 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
           </motion.div>
         </div>
       )}
+      </div>
     </div>
   );
 }
