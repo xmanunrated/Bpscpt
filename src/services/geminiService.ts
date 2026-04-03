@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 
 export const getGeminiResponse = async (
@@ -40,7 +41,7 @@ export const getGeminiResponse = async (
   while (attempts < maxAttempts) {
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-1.5-flash",
         contents: [{ parts }],
         config: {
           temperature: 0.3,
@@ -53,7 +54,7 @@ export const getGeminiResponse = async (
 
       text = response.text || "";
       if (!text) throw new Error("No response from Gemini");
-      break; // Success, exit loop
+      break;
     } catch (error: any) {
       attempts++;
       console.error(`Gemini API Attempt ${attempts} failed:`, error);
@@ -86,33 +87,24 @@ export const getGeminiResponse = async (
   }
   
   try {
-    // Clean up any potential markdown formatting if the model ignored the instruction
     let cleaned = text.trim();
     if (cleaned.includes("```")) {
       cleaned = cleaned.replace(/```json|```/g, "").trim();
     }
     
-    // Attempt to fix common truncation issues if it's almost valid
-    // This is a simple heuristic: if it ends with a comma or a partial object, we try to close it.
     const repairJSON = (text: string) => {
       let repaired = text.trim();
-      
-      // If it's already valid, return it
       try { return JSON.parse(repaired); } catch (e) {}
 
-      // Basic repair for truncated array of objects
       const arraysToRepair = ['"topics": [', '"questions": [', '"surprises": [', '"confirmed": [', '"missed": ['];
       for (const arrayKey of arraysToRepair) {
         if (repaired.includes(arrayKey) && !repaired.endsWith(']}')) {
-          // Remove trailing comma if exists
           repaired = repaired.replace(/,\s*$/, "");
-          // Close the current object if it's open
           const openBraces = (repaired.match(/\{/g) || []).length;
           const closeBraces = (repaired.match(/\}/g) || []).length;
           for (let i = 0; i < openBraces - closeBraces; i++) {
             repaired += "}";
           }
-          // Close array and root object
           repaired += "]}";
           try { return JSON.parse(repaired); } catch (e) {}
         }
@@ -141,7 +133,7 @@ export const getGeminiTextResponse = async (promptText: string, customApiKey?: s
   while (attempts < maxAttempts) {
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-1.5-flash",
         contents: [{ parts: [{ text: promptText }] }],
         config: {
           temperature: 0.7,
