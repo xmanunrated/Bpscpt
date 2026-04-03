@@ -395,7 +395,7 @@ BIHAR-SPECIFIC ANALYSIS & PRIORITIZATION:
 2. **Trend-Based Prioritization:** Prioritize topics that have appeared consistently over the last 3-5 years or show a clear upward trend in importance/frequency.
 3. **Dynamic Probability Adjustment:** This prioritization MUST be directly reflected in the 'topics' array's probability field. Topics with consistent or increasing historical trends should be assigned significantly higher probabilities (e.g., 85-95%).
 4. **Weighting:** The 'Bihar Special' subject weight (typically 25-35%) should be scaled based on the density and historical importance of Bihar-specific content identified.
-5. **Pattern Insight:** The 'patternInsight' field MUST provide a detailed summary of recurring Bihar-specific themes and their relative importance, based on this 3-5 year trend analysis.
+5. **Pattern Insight:** The 'patternInsight' field MUST provide a comprehensive and detailed summary of recurring Bihar-specific themes (e.g., specific historical movements, geographical features, economic indicators, or cultural aspects) and their relative importance. This summary MUST be directly derived from the analysis of the uploaded paper and historical trends, explaining how these themes inform the predicted topics and subject weights.
 
 DIFFICULTY ESTIMATION:
 For each predicted topic, estimate a 'difficulty' level ('Easy', 'Medium', 'Hard') based on:
@@ -409,7 +409,7 @@ Return ONLY valid JSON:
   "predictedForYear": ${sourceYear + 1},
   "confidence": 85,
   "totalTopicsFound": 20,
-  "patternInsight": "A detailed summary of recurring Bihar-specific themes and their relative importance based on historical frequency analysis, directly informing the predicted topics and weights (2-3 sentences).",
+  "patternInsight": "A comprehensive and detailed summary (4-6 sentences) of recurring Bihar-specific themes and their relative importance, directly derived from the analysis of the uploaded paper and historical trends. This should explain the specific patterns identified and how they justify the predicted topics and subject weights.",
   "topics": [
     {
       "id": "slug-1",
@@ -1564,21 +1564,25 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
 
   const handleTagClick = (tag: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSearchQuery(tag);
+    setSearchQuery(prev => prev.toLowerCase() === tag.toLowerCase() ? "" : tag);
   };
 
   const extractKeywords = (topic: string, subTopics: string[]) => {
-    const stopWords = new Set(["about", "after", "again", "against", "all", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for", "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "me", "more", "most", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should", "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself", "yourselves", "important", "topics", "questions", "based", "study", "exam", "paper", "bpsc", "prelims", "mains"]);
+    const stopWords = new Set(["about", "after", "again", "against", "all", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for", "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "me", "more", "most", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should", "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself", "yourselves", "important", "topics", "questions", "based", "study", "exam", "paper", "bpsc", "prelims", "mains", "likely", "pattern", "analysis", "context", "history", "geography", "polity", "economy", "science", "bihar"]);
     
     const extractWords = (str: string) => 
-      str.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3 && !stopWords.has(w));
+      str.toLowerCase()
+        .replace(/[()]/g, "")
+        .split(/[^a-z0-9]+/)
+        .filter(w => w.length > 3 && !stopWords.has(w));
 
     const topicWords = extractWords(topic);
     const subTopicWords = (subTopics || []).flatMap(s => extractWords(s));
     
     // Combine and prioritize topic words then sub-topic words
     const combined = [...topicWords, ...subTopicWords];
-    return Array.from(new Set(combined)).slice(0, 8);
+    // Filter out duplicates and limit to 6 most relevant
+    return Array.from(new Set(combined)).slice(0, 6);
   };
 
   const subjects = ["All", ...new Set(predictions.topics.map((t: any) => t.subject)) as Set<string>];
@@ -1878,39 +1882,46 @@ function PredictionView({ predictions, validation, accent, priorities, rounds = 
               )}
               
               {/* Keywords / Tags */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                {extractKeywords(topic.topic, topic.subTopics).map((kw: string, idx: number) => (
-                  <button 
-                    key={idx} 
-                    onClick={(e) => handleTagClick(kw, e)}
-                    title={`Filter by ${kw}`}
-                    style={{ 
-                      fontSize: 9, 
-                      background: `${accent}10`, 
-                      color: accent, 
-                      padding: "2px 8px", 
-                      borderRadius: 6, 
-                      border: `1px solid ${accent}20`,
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      transition: "all 0.2s",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 3
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = `${accent}20`;
-                      e.currentTarget.style.borderColor = accent;
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = `${accent}10`;
-                      e.currentTarget.style.borderColor = `${accent}20`;
-                    }}
-                  >
-                    <Search size={8} />
-                    {kw}
-                  </button>
-                ))}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                {extractKeywords(topic.topic, topic.subTopics).map((kw: string, idx: number) => {
+                  const isActive = searchQuery.toLowerCase() === kw.toLowerCase();
+                  return (
+                    <button 
+                      key={idx} 
+                      onClick={(e) => handleTagClick(kw, e)}
+                      title={`Filter by ${kw}`}
+                      style={{ 
+                        fontSize: 9, 
+                        background: isActive ? accent : `${accent}10`, 
+                        color: isActive ? "#000" : accent, 
+                        padding: "2px 8px", 
+                        borderRadius: 6, 
+                        border: `1px solid ${isActive ? accent : `${accent}20`}`,
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        transition: "all 0.2s",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 3
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background = `${accent}20`;
+                          e.currentTarget.style.borderColor = accent;
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background = `${accent}10`;
+                          e.currentTarget.style.borderColor = `${accent}20`;
+                        }
+                      }}
+                    >
+                      <Search size={8} />
+                      {kw}
+                    </button>
+                  );
+                })}
               </div>
               
               {/* Sub-topics (Always visible if not expanded, or part of expanded) */}
