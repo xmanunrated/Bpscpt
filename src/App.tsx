@@ -256,18 +256,43 @@ function Loader({ label, accent = C.gemini }: { label: string, accent?: string }
 }
 
 /* ─── FILE READER ────────────────────────────────────────────────────────── */
-const readFile = (file: File): Promise<{ type: string, data: string, name: string }> => new Promise((res, rej) => {
-  const r = new FileReader();
+const readFile = async (file: File): Promise<{ type: string, data: string, name: string, extractedText?: string }> => {
   if (file.type === "application/pdf") {
-    r.onload = e => res({ type: "pdf", data: (e.target?.result as string).split(",")[1], name: file.name });
-    r.onerror = rej;
-    r.readAsDataURL(file);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/parse-pdf", {
+        method: "POST",
+        body: formData
+      });
+      if (!response.ok) throw new Error("Failed to parse PDF on server");
+      const result = await response.json();
+      // We return both the extracted text and the original base64 for Gemini multimodal support
+      const base64 = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = e => res((e.target?.result as string).split(",")[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      return { type: "pdf", data: base64, name: file.name, extractedText: result.text };
+    } catch (e) {
+      console.error("Server-side PDF parsing failed, falling back to local:", e);
+      return new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = e => res({ type: "pdf", data: (e.target?.result as string).split(",")[1], name: file.name });
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+    }
   } else {
-    r.onload = e => res({ type: "text", data: (e.target?.result as string).slice(0, 12000), name: file.name });
-    r.onerror = rej;
-    r.readAsText(file);
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = e => res({ type: "text", data: (e.target?.result as string).slice(0, 12000), name: file.name });
+      r.onerror = rej;
+      r.readAsText(file);
+    });
   }
-});
+};
 
 /* ─── CLAUDE API (MOCK/PLACEHOLDER) ──────────────────────────────────────── */
 async function callClaude(fileData: any, promptText: string) {
@@ -277,8 +302,8 @@ async function callClaude(fileData: any, promptText: string) {
 }
 
 /* ─── UNIFIED CALL ───────────────────────────────────────────────────────── */
-async function callAI(model: string, fileData: any, promptText: string, customApiKey?: string) {
-  if (model === "gemini") return getGeminiResponse(fileData, promptText, customApiKey);
+async function callAI(model: string, fileData: any, promptText: string, customApiKey?: string, sourceUrl?: string) {
+  if (model === "gemini") return getGeminiResponse(fileData, promptText, customApiKey, sourceUrl);
   return callClaude(fileData, promptText);
 }
 
@@ -3082,6 +3107,9 @@ function BPSCPredictor() {
   const [sourceYear, setSourceYear] = useState(2024);
   const [priorities, setPriorities] = useState<string[]>([]);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceText, setSourceText] = useState("");
+  const [inputMode, setInputMode] = useState<"file" | "url" | "text">("file");
   const [validateFile, setValidateFile] = useState<File | null>(null);
   // ui state
   const [loading, setLoading] = useState(false);
@@ -3318,11 +3346,20 @@ function BPSCPredictor() {
 
   /* ── PREDICT ── */
   const runPredict = useCallback(async () => {
-    if (!sourceFile) return;
+    if (inputMode === "file" && !sourceFile) return;
+    if (inputMode === "url" && !sourceUrl) return;
+    if (inputMode === "text" && !sourceText) return;
+    
     setLoading(true); setError(null);
     try {
-      const fd = await readFile(sourceFile);
-      const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx, priorities), profile?.geminiKey);
+      let fd = null;
+      if (inputMode === "file" && sourceFile) {
+        fd = await readFile(sourceFile);
+      } else if (inputMode === "text" && sourceText) {
+        fd = { type: "text", data: sourceText, name: "custom-text.txt" };
+      }
+      
+      const result = await callAI(model, fd, predictPrompt(sourceYear, learningCtx, priorities), profile?.geminiKey, inputMode === "url" ? sourceUrl : undefined);
       const roundId = doc(collection(db, "rounds")).id;
       const newRound = { 
         id: roundId,
@@ -3346,11 +3383,20 @@ function BPSCPredictor() {
 
   /* ── IMPORT HISTORICAL ── */
   const runImport = useCallback(async () => {
-    if (!sourceFile) return;
+    if (inputMode === "file" && !sourceFile) return;
+    if (inputMode === "url" && !sourceUrl) return;
+    if (inputMode === "text" && !sourceText) return;
+    
     setLoading(true); setError(null);
     try {
-      const fd = await readFile(sourceFile);
-      const result = await callAI(model, fd, importPrompt(sourceYear), profile?.geminiKey);
+      let fd = null;
+      if (inputMode === "file" && sourceFile) {
+        fd = await readFile(sourceFile);
+      } else if (inputMode === "text" && sourceText) {
+        fd = { type: "text", data: sourceText, name: "custom-text.txt" };
+      }
+      
+      const result = await callAI(model, fd, importPrompt(sourceYear), profile?.geminiKey, inputMode === "url" ? sourceUrl : undefined);
       const roundId = doc(collection(db, "rounds")).id;
       const newRound = { 
         id: roundId,
@@ -3794,36 +3840,121 @@ function BPSCPredictor() {
                   isPremium={profile?.isPremium} 
                 />
 
-                <DropZone label={`BPSC PT ${sourceYear} Paper`} sublabel="PDF or TXT · Text files give the best results" onFile={setSourceFile} accent={accent} />
+                {/* Input Mode Toggle */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 16, background: C.surface, padding: 4, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                  <button 
+                    onClick={() => setInputMode("file")}
+                    style={{
+                      flex: 1, padding: "8px 0", borderRadius: 8, border: "none",
+                      background: inputMode === "file" ? `${accent}20` : "transparent",
+                      color: inputMode === "file" ? accent : C.muted,
+                      fontSize: 10, fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
+                      fontFamily: "'JetBrains Mono', monospace"
+                    }}
+                  >FILE</button>
+                  <button 
+                    onClick={() => setInputMode("url")}
+                    style={{
+                      flex: 1, padding: "8px 0", borderRadius: 8, border: "none",
+                      background: inputMode === "url" ? `${accent}20` : "transparent",
+                      color: inputMode === "url" ? accent : C.muted,
+                      fontSize: 10, fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
+                      fontFamily: "'JetBrains Mono', monospace"
+                    }}
+                  >URL</button>
+                  <button 
+                    onClick={() => setInputMode("text")}
+                    style={{
+                      flex: 1, padding: "8px 0", borderRadius: 8, border: "none",
+                      background: inputMode === "text" ? `${accent}20` : "transparent",
+                      color: inputMode === "text" ? accent : C.muted,
+                      fontSize: 10, fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
+                      fontFamily: "'JetBrains Mono', monospace"
+                    }}
+                  >TEXT</button>
+                </div>
+
+                {inputMode === "file" ? (
+                  <DropZone label={`BPSC PT ${sourceYear} Paper`} sublabel="PDF or TXT · Text files give the best results" onFile={setSourceFile} accent={accent} />
+                ) : inputMode === "url" ? (
+                  <div style={{ background: C.surface, border: `1px dashed ${C.border}`, borderRadius: 12, padding: 20, textAlign: "center" }}>
+                    <Globe size={24} style={{ color: accent, marginBottom: 10, opacity: 0.6 }} />
+                    <p style={{ color: C.text, fontSize: 13, fontWeight: 600, margin: "0 0 4px" }}>Analyze from URL</p>
+                    <p style={{ color: C.muted, fontSize: 11, margin: "0 0 14px" }}>Paste a link to a BPSC paper or analysis</p>
+                    <input 
+                      type="url" 
+                      placeholder="https://example.com/bpsc-paper"
+                      value={sourceUrl}
+                      onChange={(e) => setSourceUrl(e.target.value)}
+                      style={{
+                        width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+                        padding: "10px 12px", fontSize: 12, color: C.text, outline: "none",
+                        fontFamily: "'JetBrains Mono', monospace"
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div style={{ background: C.surface, border: `1px dashed ${C.border}`, borderRadius: 12, padding: 20, textAlign: "center" }}>
+                    <FileText size={24} style={{ color: accent, marginBottom: 10, opacity: 0.6 }} />
+                    <p style={{ color: C.text, fontSize: 13, fontWeight: 600, margin: "0 0 4px" }}>Custom Text Input</p>
+                    <p style={{ color: C.muted, fontSize: 11, margin: "0 0 14px" }}>Paste question paper text or analysis directly</p>
+                    <textarea 
+                      placeholder="Paste BPSC paper content here..."
+                      value={sourceText}
+                      onChange={(e) => setSourceText(e.target.value)}
+                      style={{
+                        width: "100%", height: 120, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+                        padding: "10px 12px", fontSize: 12, color: C.text, outline: "none",
+                        fontFamily: "'JetBrains Mono', monospace", resize: "none"
+                      }}
+                    />
+                  </div>
+                )}
 
                 {rounds.filter(r => r.validation).length > 0 && (
-                  <div style={{ marginTop: 10, background: `${C.green}08`, border: `1px solid ${C.green}25`, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 8 }}>
+                  <div style={{ marginTop: 10, background: `${C.green}08`, border: `1px solid ${C.green}25`, borderRadius: 8, padding: "8px 12px", display: "flex", gap: 8, alignItems: "center" }}>
                     <span>🔁</span>
-                    <p style={{ color: C.green, fontSize: 12, margin: 0 }}>
-                      Applying {rounds.filter(r => r.validation).length} round(s) of accumulated learnings.
-                    </p>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ color: C.green, fontSize: 12, margin: 0 }}>
+                        Applying {rounds.filter(r => r.validation).length} round(s) of accumulated learnings.
+                      </p>
+                      <button 
+                        onClick={() => setMainView("learning")}
+                        style={{ background: "none", border: "none", color: C.green, fontSize: 10, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline", marginTop: 2 }}
+                      >
+                        View Learning Progress →
+                      </button>
+                    </div>
                   </div>
                 )}
 
                 {error && <p style={{ color: C.red, fontSize: 12, marginTop: 12 }}>⚠ {error}</p>}
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
-                  <button onClick={runPredict} disabled={!sourceFile || loading} style={{
-                    width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
-                    background: sourceFile && !loading ? `linear-gradient(135deg, ${accent}, ${accent}99)` : C.surface,
-                    color: sourceFile && !loading ? "#000" : C.muted,
-                    fontWeight: 800, fontSize: 14, cursor: sourceFile ? "pointer" : "not-allowed",
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}>{loading ? "Analyzing…" : `⚡ Predict ${sourceYear + 1} Topics`}</button>
+                  <button 
+                    onClick={runPredict} 
+                    disabled={loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)} 
+                    style={{
+                      width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
+                      background: (loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)) ? C.surface : `linear-gradient(135deg, ${accent}, ${accent}99)`,
+                      color: (loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)) ? C.muted : "#000",
+                      fontWeight: 800, fontSize: 14, cursor: (loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)) ? "not-allowed" : "pointer",
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >{loading ? "Analyzing…" : `⚡ Predict ${sourceYear + 1} Topics`}</button>
 
-                  <button onClick={runImport} disabled={!sourceFile || loading} style={{
-                    width: "100%", padding: "12px 0", borderRadius: 12, 
-                    border: `1px solid ${C.border}`,
-                    background: sourceFile && !loading ? `${C.gemini}15` : C.surface,
-                    color: sourceFile && !loading ? C.gemini : C.muted,
-                    fontWeight: 700, fontSize: 13, cursor: sourceFile ? "pointer" : "not-allowed",
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}>
+                  <button 
+                    onClick={runImport} 
+                    disabled={loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)} 
+                    style={{
+                      width: "100%", padding: "12px 0", borderRadius: 12, 
+                      border: `1px solid ${C.border}`,
+                      background: (loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)) ? C.surface : `${C.gemini}15`,
+                      color: (loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)) ? C.muted : C.gemini,
+                      fontWeight: 700, fontSize: 13, cursor: (loading || (inputMode === "file" ? !sourceFile : inputMode === "url" ? !sourceUrl : !sourceText)) ? "pointer" : "not-allowed",
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
                     {loading ? "Importing…" : `📥 Import ${sourceYear} as Historical Data`}
                   </button>
                   <p style={{ color: C.muted, fontSize: 10, textAlign: "center", margin: 0 }}>

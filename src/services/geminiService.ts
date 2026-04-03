@@ -1,6 +1,11 @@
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 
-export const getGeminiResponse = async (fileData: { type: string, data: string, name: string } | null, promptText: string, customApiKey?: string) => {
+export const getGeminiResponse = async (
+  fileData: { type: string, data: string, name: string, extractedText?: string } | null, 
+  promptText: string, 
+  customApiKey?: string,
+  sourceUrl?: string
+) => {
   const key = customApiKey || process.env.GEMINI_API_KEY;
   if (!key) throw new Error("Gemini API key is not configured. Please check your environment variables or admin settings.");
   const ai = new GoogleGenAI({ apiKey: key });
@@ -14,10 +19,18 @@ export const getGeminiResponse = async (fileData: { type: string, data: string, 
           data: fileData.data
         }
       });
+      if (fileData.extractedText) {
+        parts.push({ text: `Extracted Text from PDF (for reference):\n\n${fileData.extractedText}` });
+      }
     } else {
       parts.push({ text: `BPSC PT Question Paper Content:\n\n${fileData.data}` });
     }
   }
+  
+  if (sourceUrl) {
+    parts.push({ text: `Please analyze the content from this URL: ${sourceUrl}` });
+  }
+
   parts.push({ text: promptText });
 
   let text = "";
@@ -34,6 +47,7 @@ export const getGeminiResponse = async (fileData: { type: string, data: string, 
           maxOutputTokens: 8192,
           systemInstruction: "You are a BPSC PT exam expert. Return ONLY valid JSON. No markdown, no backticks, no explanation.",
           responseMimeType: "application/json",
+          tools: sourceUrl ? [{ urlContext: {} }] : undefined,
         },
       });
 

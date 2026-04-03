@@ -7,9 +7,14 @@ import crypto from "crypto";
 import cookieParser from "cookie-parser";
 import session from "express-session";
 import admin from "firebase-admin";
+import multer from "multer";
+// @ts-ignore
+import pdf from "pdf-parse/lib/pdf-parse.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID || "rzp_test_placeholder",
@@ -124,6 +129,20 @@ async function startServer() {
       });
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
+  // API: Parse PDF
+  app.post("/api/parse-pdf", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+      const data = await pdf(req.file.buffer);
+      res.json({ text: data.text, numPages: data.numpages, info: data.info });
+    } catch (error: any) {
+      console.error("PDF Parsing Error:", error);
+      res.status(500).json({ error: "Failed to parse PDF" });
     }
   });
 
